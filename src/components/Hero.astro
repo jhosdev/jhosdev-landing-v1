@@ -1,0 +1,27 @@
+---
+import type { PortfolioContent } from '../data/types';
+
+interface Props {
+  content: Pick<PortfolioContent, 'headline' | 'lede' | 'stats'>;
+}
+
+const {
+  content: { headline, lede, stats },
+} = Astro.props;
+---
+
+<section id="hero">
+  <p class="prompt"><span class="typed">$ whoami</span><span class="cursor" aria-hidden="true">▋</span></p>
+  <h1>{headline[0]}<br />{headline[1]}</h1>
+  <p class="lede">{lede}</p>
+  <div class="stats">
+    {
+      stats.map((stat) => (
+        <div>
+          <b>{stat.value}</b>
+          <span>{stat.label}</span>
+        </div>
+      ))
+    }
+  </div>
+</section>

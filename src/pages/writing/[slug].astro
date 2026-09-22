@@ -1,0 +1,18 @@
+---
+import type { CollectionEntry } from 'astro:content';
+import ArticlePage from '../../layouts/ArticlePage.astro';
+import { writingByLang } from '../../data/writing';
+
+export async function getStaticPaths() {
+  const entries = await writingByLang('en');
+  return entries.map((entry) => ({ params: { slug: entry.data.slug }, props: { entry } }));
+}
+
+interface Props {
+  entry: CollectionEntry<'writing'>;
+}
+
+const { entry } = Astro.props;
+---
+
+<ArticlePage locale="en" entry={entry} />

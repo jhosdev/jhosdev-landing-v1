@@ -1,0 +1,27 @@
+---
+import type { Project } from '../data/types';
+
+interface Props {
+  projects: Project[];
+}
+
+const { projects } = Astro.props;
+---
+
+<section id="projects">
+  <p class="prompt">$ ls projects/ <span class="comment"># selected</span></p>
+  <div class="cards">
+    {
+      projects.map((project) => (
+        <article class="card">
+          <header>
+            <h3>{project.slug}</h3>
+            <span class={`status ${project.status}`}>● {project.statusLabel}</span>
+          </header>
+          <p>{project.description}</p>
+          <p class="tags">{project.tags.join(' · ')}</p>
+        </article>
+      ))
+    }
+  </div>
+</section>

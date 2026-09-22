@@ -1,0 +1,51 @@
+---
+import '../styles/global.css';
+import type { Locale } from '../data/resume';
+// First-paint fonts (hero prompt, h1) — preloaded so the browser fetches them
+// immediately instead of waiting to discover them via the CSS @font-face.
+import monoWoff2 from '@fontsource/ibm-plex-mono/files/ibm-plex-mono-latin-400-normal.woff2?url';
+import sansWoff2 from '@fontsource/ibm-plex-sans/files/ibm-plex-sans-latin-600-normal.woff2?url';
+
+interface AlternateLink {
+  hreflang: string;
+  /** Root-relative path, e.g. "/es/writing/foo/" — absolute URL is built here from Astro.site. */
+  path: string;
+}
+
+interface Props {
+  locale: Locale;
+  title: string;
+  description: string;
+  /** This page's own root-relative path, e.g. "/" or "/es/writing/foo/". Omit for pages with no canonical URL (404). */
+  path?: string;
+  /** Translations of this exact page. A self-referencing hreflang entry is added automatically when `path` is set. */
+  alternates?: AlternateLink[];
+}
+
+const { locale, title, description, path, alternates } = Astro.props;
+
+const hreflangLinks = path
+  ? [
+      { hreflang: locale, href: new URL(path, Astro.site) },
+      ...(alternates ?? []).map((a) => ({ hreflang: a.hreflang, href: new URL(a.path, Astro.site) })),
+    ]
+  : [];
+---
+
+<!doctype html>
+<html lang={locale}>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="preload" as="font" type="font/woff2" href={monoWoff2} crossorigin />
+    <link rel="preload" as="font" type="font/woff2" href={sansWoff2} crossorigin />
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    <meta name="generator" content={Astro.generator} />
+    {hreflangLinks.map((a) => <link rel="alternate" hreflang={a.hreflang} href={a.href} />)}
+  </head>
+  <body>
+    <slot />
+  </body>
+</html>

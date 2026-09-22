@@ -1,0 +1,60 @@
+---
+import BaseLayout from './BaseLayout.astro';
+import TopBar from '../components/TopBar.astro';
+import Hero from '../components/Hero.astro';
+import Projects from '../components/Projects.astro';
+import Stack from '../components/Stack.astro';
+import Principles from '../components/Principles.astro';
+import Experience from '../components/Experience.astro';
+import Writing from '../components/Writing.astro';
+import Contact from '../components/Contact.astro';
+import { getContent } from '../data/content';
+import { getResume, withLocale, otherLocale, type Locale } from '../data/resume';
+import { writingByLang, articlePath } from '../data/writing';
+import type { Post } from '../data/types';
+
+interface Props {
+  locale: Locale;
+}
+
+const { locale } = Astro.props;
+const resume = getResume(locale);
+const content = getContent(locale);
+const { basics } = resume;
+const title = `${basics.name} — ${basics.label}`;
+const description = basics.summary.split('. ')[0] + '.';
+
+const entries = await writingByLang(locale);
+const posts: Post[] = entries
+  .sort((a, b) => b.data.date.getTime() - a.data.date.getTime())
+  .map((entry) => ({
+    year: entry.data.date.getUTCFullYear(),
+    slug: `${entry.data.slug}.md`,
+    subtitle: entry.data.description,
+    href: articlePath(locale, entry.data.slug),
+  }));
+
+const alternates = [
+  { hreflang: otherLocale(locale), path: withLocale(otherLocale(locale), '/') },
+  { hreflang: 'x-default', path: '/' },
+];
+---
+
+<BaseLayout
+  locale={locale}
+  title={title}
+  description={description}
+  path={withLocale(locale, '/')}
+  alternates={alternates}
+>
+  <TopBar promptUser={content.promptUser} promptSuffix={content.promptSuffix} locale={locale} />
+  <main>
+    <Hero content={content} />
+    <Projects projects={content.projects} />
+    <Stack stack={content.stack} />
+    <Principles principles={content.principles} />
+    <Experience experience={content.experience} />
+    <Writing posts={posts} />
+    <Contact contact={content.contact} />
+  </main>
+</BaseLayout>

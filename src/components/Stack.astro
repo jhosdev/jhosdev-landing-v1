@@ -1,0 +1,16 @@
+---
+import type { StackRow } from '../data/types';
+import KeyValueRows from './KeyValueRows.astro';
+
+interface Props {
+  stack: StackRow[];
+}
+
+const { stack } = Astro.props;
+const rows = stack.map((row) => ({ key: row.category, value: row.items.join(' · ') }));
+---
+
+<section id="stack">
+  <p class="prompt">$ cat stack.txt</p>
+  <KeyValueRows rows={rows} />
+</section>

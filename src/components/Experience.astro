@@ -1,0 +1,28 @@
+---
+import type { ExperienceEntry } from '../data/types';
+
+interface Props {
+  experience: ExperienceEntry[];
+}
+
+const { experience } = Astro.props;
+---
+
+<section id="experience">
+  <p class="prompt">$ history --work</p>
+  <div class="rows">
+    {
+      experience.map((job) => (
+        <div class="row">
+          <span class="when">{job.period}</span>
+          <div>
+            <h4>
+              {job.title} — {job.company}
+            </h4>
+            <p>{job.summary}</p>
+          </div>
+        </div>
+      ))
+    }
+  </div>
+</section>

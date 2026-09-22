@@ -1,0 +1,41 @@
+---
+import { withLocale, otherLocale, type Locale } from '../data/resume';
+
+interface Props {
+  promptUser: string;
+  promptSuffix: string;
+  locale: Locale;
+  /** Root-relative path to this page's translation, for the language switcher. Defaults to the other locale's homepage. */
+  switchHref?: string;
+  /** Hide the language switcher entirely — used on 404, where the visited locale is unknown. */
+  hideLangSwitch?: boolean;
+}
+
+const { promptUser, promptSuffix, locale, switchHref, hideLangSwitch } = Astro.props;
+
+const home = withLocale(locale, '/');
+const otherHref = switchHref ?? withLocale(otherLocale(locale), '/');
+---
+
+<header class="topbar">
+  <a class="identity-link" href={home}>
+    <span class="dot"></span><span class="identity">{promptUser}<span class="suffix"> ~ {promptSuffix}</span></span>
+  </a>
+  <div class="topbar-right">
+    <nav>
+      <a href={`${home}#projects`}>projects</a>
+      <a href={`${home}#stack`}>stack</a>
+      <a href={`${home}#writing`}>writing</a>
+      <a class="cta" href={`${home}#contact`}>contact →</a>
+    </nav>
+    {
+      !hideLangSwitch && (
+        <div class="lang-switch">
+          {locale === 'en' ? <span class="active">en</span> : <a href={otherHref}>en</a>}
+          <span class="sep">/</span>
+          {locale === 'es' ? <span class="active">es</span> : <a href={otherHref}>es</a>}
+        </div>
+      )
+    }
+  </div>
+</header>

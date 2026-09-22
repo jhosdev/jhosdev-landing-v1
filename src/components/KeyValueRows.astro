@@ -1,0 +1,18 @@
+---
+interface Props {
+  rows: { key: string; value: string }[];
+}
+
+const { rows } = Astro.props;
+---
+
+<div class="stack">
+  {
+    rows.map((row) => (
+      <>
+        <span class="k">{row.key}</span>
+        <span>{row.value}</span>
+      </>
+    ))
+  }
+</div>

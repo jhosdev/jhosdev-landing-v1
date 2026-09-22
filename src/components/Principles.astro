@@ -1,0 +1,15 @@
+---
+import type { Principle } from '../data/types';
+import KeyValueRows from './KeyValueRows.astro';
+
+interface Props {
+  principles: Principle[];
+}
+
+const { principles } = Astro.props;
+---
+
+<section id="principles">
+  <p class="prompt">$ cat principles.txt</p>
+  <KeyValueRows rows={principles} />
+</section>

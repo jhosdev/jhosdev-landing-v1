@@ -1,0 +1,18 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import TopBar from '../components/TopBar.astro';
+import { getContent } from '../data/content';
+import { getResume } from '../data/resume';
+
+const content = getContent('en');
+const { basics } = getResume('en');
+---
+
+<BaseLayout locale="en" title={`404 — ${basics.name}`} description="Page not found.">
+  <TopBar promptUser={content.promptUser} promptSuffix={content.promptSuffix} locale="en" hideLangSwitch />
+  <main class="not-found">
+    <p class="prompt">$ cat /requested/page</p>
+    <p class="error">cat: /requested/page: No such file or directory</p>
+    <p><a href="/">← back home</a></p>
+  </main>
+</BaseLayout>

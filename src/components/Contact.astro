@@ -1,0 +1,30 @@
+---
+import type { PortfolioContent } from '../data/types';
+
+interface Props {
+  contact: PortfolioContent['contact'];
+}
+
+const { contact } = Astro.props;
+---
+
+<section id="contact" style="margin-bottom:0">
+  <div class="contact">
+    <p class="prompt">$ contact --open-to work</p>
+    <h2>{contact.heading}</h2>
+    <div class="links">
+      {
+        contact.links.map((link) => (
+          <a
+            class={link.primary ? undefined : 'secondary'}
+            href={link.href}
+            target={link.primary ? undefined : '_blank'}
+            rel={link.primary ? undefined : 'noreferrer noopener'}
+          >
+            {link.label}
+          </a>
+        ))
+      }
+    </div>
+  </div>
+</section>

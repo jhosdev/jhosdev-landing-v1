@@ -1,0 +1,106 @@
+{
+  "$schema": "https://raw.githubusercontent.com/jsonresume/resume-schema/v1.0.0/schema.json",
+  "basics": {
+    "name": "Ada Example",
+    "label": "Backend Engineer",
+    "email": "ada@example.com",
+    "url": "https://example.com",
+    "summary": "One paragraph. What you build, where, and the one concrete detail that makes it yours.",
+    "location": { "city": "City", "countryCode": "XX", "region": "Region" },
+    "profiles": [
+      { "network": "LinkedIn", "username": "ada", "url": "https://linkedin.com/in/ada" },
+      { "network": "GitHub", "username": "ada", "url": "https://github.com/ada" }
+    ]
+  },
+  "work": [
+    {
+      "name": "Acme",
+      "position": "Senior Backend Engineer",
+      "url": "https://acme.example.com",
+      "location": "Remote",
+      "startDate": "2024-01",
+      "summary": "One or two sentences: what the company does and what you own there. Shown on the experience row.",
+      "highlights": [
+        "Outcome first, mechanism second, technology last. One sentence, with a number that has a baseline.",
+        "A second bullet. Keep three to six per current role, fewer for old ones."
+      ]
+    },
+    {
+      "name": "Previous Co",
+      "position": "Software Engineer",
+      "location": "Remote",
+      "startDate": "2022-03",
+      "endDate": "2023-12",
+      "highlights": ["What you built and what it changed."]
+    }
+  ],
+  "projects": [
+    {
+      "name": "project-slug",
+      "entity": "Acme",
+      "status": "production",
+      "statusLabel": "production",
+      "description": "One or two sentences. Rendered as a project card. status is production | active | archived.",
+      "keywords": ["kafka", "python"]
+    },
+    {
+      "name": "another-project",
+      "entity": "Acme",
+      "status": "active",
+      "statusLabel": "active",
+      "description": "A second card — a project still in progress.",
+      "keywords": ["fastapi", "postgresql"]
+    }
+  ],
+  "education": [
+    {
+      "institution": "University",
+      "area": "Computer Science",
+      "studyType": "B.Sc.",
+      "startDate": "2018",
+      "endDate": "2022"
+    }
+  ],
+  "awards": [],
+  "skills": [
+    { "name": "AI Engineering", "keywords": ["LLM evaluation"] },
+    { "name": "Languages", "keywords": ["Python", "TypeScript"] },
+    { "name": "Backend & Data", "keywords": ["FastAPI", "Kafka/MSK", "PostgreSQL", "Redis"] },
+    { "name": "Cloud & Infra", "keywords": ["AWS", "Kubernetes", "Docker"] },
+    { "name": "Ingeniería de IA", "keywords": ["LLM evaluation"] },
+    { "name": "Lenguajes", "keywords": ["Python", "TypeScript"] },
+    { "name": "Backend y Datos", "keywords": ["FastAPI", "Kafka/MSK", "PostgreSQL", "Redis"] },
+    { "name": "Nube e Infraestructura", "keywords": ["AWS", "Kubernetes", "Docker"] }
+  ],
+  "languages": [{ "language": "English", "fluency": "Native speaker" }],
+  "meta": {
+    "canonical": "https://example.com/resume.json",
+    "version": "v0.0.0",
+    "lastModified": "2026-01-01",
+    "site": {
+      "headlineLine2": "Second line of the hero headline.",
+      "stats": [
+        { "value": "42", "label": "first stat" },
+        { "value": "3x", "label": "second stat" },
+        { "value": "~60", "label": "third stat" },
+        { "value": "17", "label": "fourth stat" }
+      ],
+      "stack": {
+        "streaming": ["Kafka/MSK"],
+        "data": ["PostgreSQL", "Redis"],
+        "infra": ["AWS", "Docker"]
+      },
+      "principles": [
+        { "key": "depth", "value": "One sentence per principle." },
+        { "key": "verification", "value": "Another one." }
+      ],
+      "contactHeading": "Working on something hard? Let's talk."
+    },
+    "linkedin": {
+      "headline": "Title | what you build | stack | location. Max 220 characters, first 60 matter most.",
+      "about": "Up to 2600 characters. First 200 to 300 show before the fold.",
+      "topSkills": ["Python (Programming Language)", "Distributed Systems"],
+      "skills": ["Python (Programming Language)", "Distributed Systems", "Apache Kafka"]
+    }
+  }
+}

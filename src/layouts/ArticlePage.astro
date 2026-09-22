@@ -1,0 +1,58 @@
+---
+import { render, type CollectionEntry } from 'astro:content';
+import BaseLayout from './BaseLayout.astro';
+import TopBar from '../components/TopBar.astro';
+import { getContent } from '../data/content';
+import { getResume, otherLocale, type Locale } from '../data/resume';
+import { findTranslation, readingTime, articlePath } from '../data/writing';
+
+interface Props {
+  locale: Locale;
+  entry: CollectionEntry<'writing'>;
+}
+
+const { locale, entry } = Astro.props;
+const { Content } = await render(entry);
+
+const translation = findTranslation(entry, otherLocale(locale));
+const translationHref = translation ? articlePath(otherLocale(locale), translation.data.slug) : undefined;
+
+const content = getContent(locale);
+const { basics } = getResume(locale);
+const dateLocale = locale === 'en' ? 'en-US' : 'es-ES';
+const dateLabel = entry.data.date.toLocaleDateString(dateLocale, {
+  year: 'numeric',
+  month: 'long',
+  day: 'numeric',
+  timeZone: 'UTC',
+});
+const minutes = readingTime(entry.body);
+
+const path = articlePath(locale, entry.data.slug);
+const alternates = translationHref ? [{ hreflang: otherLocale(locale), path: translationHref }] : undefined;
+---
+
+<BaseLayout
+  locale={locale}
+  title={`${entry.data.title} — ${basics.name}`}
+  description={entry.data.description}
+  path={path}
+  alternates={alternates}
+>
+  <TopBar promptUser={content.promptUser} promptSuffix={content.promptSuffix} locale={locale} switchHref={translationHref} />
+  <main class="article">
+    <p class="prompt">$ cat writing/{entry.data.slug}.md</p>
+    <h1>{entry.data.title}</h1>
+    <p class="meta">{dateLabel} · {minutes} {content.article.minRead}</p>
+    <div class="prose">
+      <Content />
+    </div>
+    {
+      translationHref && (
+        <p class="translation-link">
+          <a href={translationHref}>{content.article.translationLink}</a>
+        </p>
+      )
+    }
+  </main>
+</BaseLayout>

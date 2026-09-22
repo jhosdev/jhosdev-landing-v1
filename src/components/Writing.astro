@@ -1,0 +1,23 @@
+---
+import type { Post } from '../data/types';
+
+interface Props {
+  posts: Post[];
+}
+
+const { posts } = Astro.props;
+---
+
+<section id="writing">
+  <p class="prompt">$ tail -3 writing/</p>
+  <div class="posts">
+    {
+      posts.map((post) => (
+        <a href={post.href}>
+          <span class="yr">{post.year}</span>
+          {post.slug} — {post.subtitle}
+        </a>
+      ))
+    }
+  </div>
+</section>
