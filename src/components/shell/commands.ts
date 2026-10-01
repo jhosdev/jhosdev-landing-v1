@@ -1,4 +1,4 @@
-// Command interpreter for the /lab/shell terminal. Pure logic, no DOM: it maps
+// Command interpreter for the home page prompt and the /lab/shell terminal. Pure logic, no DOM: it maps
 // an input line to a list of actions the runtime renders, so it can be tested
 // in vitest and so every personal fact stays in the server-rendered markup
 // (actions point at it by `ref`, they never carry profile copy themselves).
@@ -13,6 +13,8 @@ export interface ShellFile {
   /** Where `open` goes: an article page, a profile, the PDF. */
   href?: string;
   external?: boolean;
+  /** Save the target instead of navigating to it (the PDF). */
+  download?: boolean;
 }
 
 export interface ShellStrings {
@@ -42,6 +44,10 @@ export interface ShellContext {
   files: ShellFile[];
   langHref: Record<ShellLocale, string>;
   t: ShellStrings;
+  /** Commands listed by `help` and offered by completion. Defaults to COMMANDS. */
+  commands?: readonly string[];
+  /** Command name (or alias) -> `ref` of the section it shows. Defaults to the /lab/shell sections. */
+  sections?: Record<string, string>;
 }
 
 export interface MenuItem {
@@ -55,7 +61,7 @@ export type Action =
   | { type: 'print'; ref: string }
   | { type: 'lines'; lines: string[]; tone?: 'error' | 'dim' }
   | { type: 'menu'; items: MenuItem[]; wide?: boolean }
-  | { type: 'go'; href: string; external?: boolean }
+  | { type: 'go'; href: string; external?: boolean; download?: boolean }
   | { type: 'title'; text: string }
   | { type: 'clear' }
   | { type: 'reset' }
@@ -88,9 +94,9 @@ export const COMMANDS = [
   'reboot',
 ] as const;
 
-const DIRS = ['projects', 'writing', 'links'];
+const DIRS = ['projects', 'writing', 'associations', 'links'];
 /** Directory listings that are already rendered as a section on the page. */
-const DIR_REF: Record<string, string> = { projects: 'projects', writing: 'writing', links: 'contact' };
+const DIR_REF: Record<string, string> = { projects: 'projects', writing: 'writing', associations: 'associations', links: 'contact' };
 /** Commands that are just `cat` of one section. */
 const SECTION: Record<string, string> = {
   whoami: 'whoami',
@@ -137,8 +143,8 @@ function distance(a: string, b: string): number {
   return row[b.length];
 }
 
-function nearest(name: string): string | undefined {
-  const scored = COMMANDS.map((c) => [distance(name, c), c] as const).sort((x, y) => x[0] - y[0])[0];
+function nearest(name: string, commands: readonly string[]): string | undefined {
+  const scored = commands.map((c) => [distance(name, c), c] as const).sort((x, y) => x[0] - y[0])[0];
   return scored[0] <= 2 ? scored[1] : undefined;
 }
 
@@ -189,7 +195,12 @@ function open(args: string[], ctx: ShellContext): Result {
   if (args.length === 0) return fail(`open: ${ctx.t.missingOperand}`, 2);
   const file = findFile(args[0], ctx.files);
   if (!file) return fail(`open: ${fill(ctx.t.noSuchFile, args[0])}`);
-  if (file.href) return ok({ type: 'lines', lines: [fill(ctx.t.opening, file.path)], tone: 'dim' }, { type: 'go', href: file.href, external: file.external });
+  if (file.href) {
+    return ok(
+      { type: 'lines', lines: [fill(ctx.t.opening, file.path)], tone: 'dim' },
+      { type: 'go', href: file.href, ...(file.external && { external: true }), ...(file.download && { download: true }) },
+    );
+  }
   return ok({ type: 'print', ref: file.ref as string });
 }
 
@@ -203,13 +214,13 @@ function lang(args: string[], ctx: ShellContext): Result {
 function help(ctx: ShellContext): Result {
   return ok(
     { type: 'lines', lines: [ctx.t.helpIntro], tone: 'dim' },
-    { type: 'menu', items: COMMANDS.map((c) => ({ label: USAGE[c] ?? c, run: RUNNABLE[c] ?? c, hint: ctx.t.help[c] })) },
+    { type: 'menu', items: (ctx.commands ?? COMMANDS).map((c) => ({ label: USAGE[c] ?? c, run: RUNNABLE[c] ?? c, hint: ctx.t.help[c] })) },
   );
 }
 
 const USAGE: Record<string, string> = { ls: 'ls [dir]', cat: 'cat <file>', open: 'open <name>', lang: 'lang en|es' };
 /** What a click on a help row runs when the bare command needs an argument. */
-const RUNNABLE: Record<string, string> = { cat: 'ls', open: 'ls links/' };
+const RUNNABLE: Record<string, string> = { cat: 'ls', open: 'ls' };
 
 /** Runs one input line. `history` is the list of previous inputs, oldest first. */
 export function execute(input: string, ctx: ShellContext, history: string[] = []): Result {
@@ -221,7 +232,8 @@ export function execute(input: string, ctx: ShellContext, history: string[] = []
     if (args[0] === '--work') return ok({ type: 'print', ref: 'experience' });
     return ok({ type: 'lines', lines: history.map((h, i) => `${String(i + 1).padStart(4)}  ${h}`) });
   }
-  if (cmd in SECTION) return ok({ type: 'print', ref: SECTION[cmd] });
+  const sections = ctx.sections ?? SECTION;
+  if (Object.hasOwn(sections, cmd)) return ok({ type: 'print', ref: sections[cmd] });
 
   switch (cmd) {
     case 'help':
@@ -243,9 +255,17 @@ export function execute(input: string, ctx: ShellContext, history: string[] = []
     case 'clear':
     case 'cls':
       return ok({ type: 'clear' });
+    case 'resume':
+    case 'dossier':
+    case 'cv':
+      return open([ctx.files.find((f) => f.download)?.path ?? 'resume.pdf'], ctx);
     case 'reset':
+    case 'all':
+    case 'full':
       return ok({ type: 'reset' });
     case 'reboot':
+    case 'replay':
+    case 'intro':
       return ok({ type: 'reboot' });
     case 'exit':
     case 'logout':
@@ -267,18 +287,18 @@ export function execute(input: string, ctx: ShellContext, history: string[] = []
       return ok({ type: 'title', text: ctx.t.hello });
   }
 
-  const guess = nearest(cmd);
+  const guess = nearest(cmd, ctx.commands ?? COMMANDS);
   const lines = [`sh: ${fill(ctx.t.notFound, name)}`];
   if (guess) lines.push(fill(ctx.t.didYouMean, guess));
   return { actions: [{ type: 'lines', lines, tone: 'error' }], status: 127 };
 }
 
 function candidates(tokens: string[], ctx: ShellContext): string[] {
-  if (tokens.length === 1) return [...COMMANDS];
+  if (tokens.length === 1) return [...(ctx.commands ?? COMMANDS)];
   const paths = ctx.files.map((f) => f.path);
   switch (tokens[0].toLowerCase()) {
     case 'ls':
-      return DIRS.map((d) => `${d}/`);
+      return DIRS.filter((d) => paths.some((p) => p.startsWith(`${d}/`))).map((d) => `${d}/`);
     case 'cat':
       return ctx.files.filter((f) => f.ref).map((f) => f.path);
     case 'open':

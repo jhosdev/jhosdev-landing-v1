@@ -1,64 +1,584 @@
 ---
+// The home page: the Machine's file on the asset. Six addressable sections of
+// server-rendered semantic HTML (it reads correctly with JavaScript off);
+// machine/runtime.ts then adds the intro, one entrance movement per section,
+// focus mode (a hash opens just that section) and the command line.
+// Every fact comes from the resume data and the writing collection; every
+// piece of machine-speak comes from machine/copy.ts.
+import '../components/machine/machine.css';
 import BaseLayout from './BaseLayout.astro';
-import TopBar from '../components/TopBar.astro';
-import Hero from '../components/Hero.astro';
-import BootScene from '../components/BootScene.astro';
-import Projects from '../components/Projects.astro';
-import Stack from '../components/Stack.astro';
-import Principles from '../components/Principles.astro';
-import Experience from '../components/Experience.astro';
-import Writing from '../components/Writing.astro';
-import Contact from '../components/Contact.astro';
-import { getContent } from '../data/content';
+import MachineBar from '../components/machine/MachineBar.astro';
+import SectionHead from '../components/machine/SectionHead.astro';
+import TicTacToe from '../components/TicTacToe.astro';
+import { getContent, slugify } from '../data/content';
 import { getResume, withLocale, otherLocale, type Locale } from '../data/resume';
-import { writingByLang, articlePath } from '../data/writing';
-import type { Post } from '../data/types';
+import { writingByLang, articlePath, readingTime } from '../data/writing';
+import { machineCopy, MACHINE_COMMANDS, SECTIONS, type SectionId } from '../components/machine/copy';
+import type { ShellContext, ShellFile } from '../components/shell/commands';
+import type { MachineData } from '../components/machine/scene';
 
 interface Props {
   locale: Locale;
 }
 
 const { locale } = Astro.props;
-const resume = getResume(locale);
+const { basics, meta } = getResume(locale);
 const content = getContent(locale);
-const { basics } = resume;
+const copy = machineCopy[locale];
+const other = otherLocale(locale);
 const title = `${basics.name} — ${basics.label}`;
-const description = basics.summary.split('. ')[0] + '.';
+const description = basics.summary.split('. ')[0].replace(/\.?$/, '.');
+const [user, host = 'prod'] = content.promptUser.split('@');
+const place = [basics.location.city, basics.location.countryCode].filter(Boolean).join(', ');
+const pad = (n: number) => String(n).padStart(2, '0');
+const index = (id: SectionId) => SECTIONS.indexOf(id) + 1;
 
-const entries = await writingByLang(locale);
-const posts: Post[] = entries
+// The name wraps by word, like the intro does, instead of shrinking to a caption.
+const words = basics.name.split(/\s+/).filter(Boolean);
+const half = Math.ceil(words.length / 2);
+const nameLines = words.length <= 3 ? words : [words.slice(0, half).join(' '), words.slice(half).join(' ')];
+const nameChars = Math.max(...nameLines.map((line) => line.length));
+
+const jobs = content.experience;
+const projects = content.projects.map((project) => ({ ...project, id: `projects/${slugify(project.slug)}` }));
+const dateLocale = locale === 'en' ? 'en-US' : 'es-ES';
+const posts = (await writingByLang(locale))
   .sort((a, b) => b.data.date.getTime() - a.data.date.getTime())
   .map((entry) => ({
-    year: entry.data.date.getUTCFullYear(),
-    slug: `${entry.data.slug}.md`,
-    subtitle: entry.data.description,
+    id: `writing/${entry.data.slug}`,
+    slug: entry.data.slug,
+    title: entry.data.title,
+    description: entry.data.description,
     href: articlePath(locale, entry.data.slug),
+    iso: entry.data.date.toISOString().slice(0, 10),
+    date: entry.data.date.toLocaleDateString(dateLocale, { year: 'numeric', month: 'short', day: 'numeric', timeZone: 'UTC' }),
+    minutes: readingTime(entry.body),
   }));
 
+const links = content.contact.links.filter((link) => !link.download);
+const primary = links.find((link) => link.primary);
+const secondary = links.filter((link) => !link.primary);
+const dossier = content.contact.links.find((link) => link.download);
+const linkName = (label: string) => label.replace(/\s*[↗↓]$/, '');
+
+// The prompt's world: everything `open <name>` can reach, by reference to the markup below.
+const files: ShellFile[] = [
+  ...(dossier ? [{ path: linkName(dossier.label), href: dossier.href, download: true }] : []),
+  ...projects.map((project) => ({ path: project.id, ref: project.id })),
+  ...posts.map((post) => ({ path: `${post.id}.md`, ref: post.id, href: post.href })),
+  ...jobs.map((job) => ({ path: `associations/${job.id}`, ref: `associations/${job.id}` })),
+  ...(primary ? [{ path: 'links/email', href: primary.href }] : []),
+  ...secondary.map((link) => ({ path: `links/${linkName(link.label)}`, href: link.href, external: true })),
+];
+const context: ShellContext = {
+  user,
+  host,
+  locale,
+  files,
+  langHref: { en: withLocale('en', '/'), es: withLocale('es', '/') },
+  t: copy.t,
+  commands: MACHINE_COMMANDS,
+  sections: { ...Object.fromEntries(SECTIONS.map((id) => [id, id])), ...copy.aliases },
+};
+const runtime = {
+  context,
+  titles: Object.fromEntries(SECTIONS.map((id) => [id, copy.sections[id].title])),
+  navigating: copy.navigating,
+  fullFile: copy.fullFile,
+  still: copy.still,
+};
+const json = (value: unknown) => JSON.stringify(value).replace(/</g, '\\u003c');
+
+// Only the intro's scenes need data: boot, sweep, acquire, identify.
+const intro: MachineData = {
+  handle: user,
+  prompt: content.promptUser,
+  name: basics.name,
+  role: basics.label,
+  location: place,
+  headline: content.headline[1],
+  stamp: meta.lastModified ?? '',
+  stats: [],
+  projects: [],
+  stack: [],
+  experience: jobs.slice(0, 1).map(({ period, title: role, company }) => ({ period, title: role, company })),
+};
+
+interface Chip {
+  label: string;
+  run: string;
+  /** No-JS fallback target; chips without one only exist with JavaScript. */
+  href?: string;
+  section?: SectionId;
+  download?: boolean;
+  hreflang?: Locale;
+}
+const chips: Chip[] = [
+  ...SECTIONS.map((id) => ({ label: id, run: id, href: `#${id}`, section: id })),
+  ...(dossier ? [{ label: 'resume ↓', run: 'resume', href: dossier.href, download: true }] : []),
+  { label: 'help', run: 'help' },
+  { label: `lang ${other}`, run: `lang ${other}`, href: withLocale(other, '/'), hreflang: other },
+];
+
+// Movement timings (seconds from the start of a section's entrance).
+const selectAt = 0.8 + jobs.length * 0.13;
+const statusTone = (status: string) => (status === 'production' ? 'green' : status === 'active' ? 'amber' : 'white');
 const alternates = [
-  { hreflang: otherLocale(locale), path: withLocale(otherLocale(locale), '/') },
+  { hreflang: other, path: withLocale(other, '/') },
   { hreflang: 'x-default', path: '/' },
 ];
 ---
 
-<BaseLayout
-  locale={locale}
-  title={title}
-  description={description}
-  path={withLocale(locale, '/')}
-  alternates={alternates}
->
-  <TopBar promptUser={content.promptUser} promptSuffix={content.promptSuffix} locale={locale} />
-  <main>
-    <section>
-      <BootScene label={content.promptUser.split('@')[0]} />
-    </section>
-    <Hero content={content} />
-    <Projects projects={content.projects} />
-    <Stack stack={content.stack} />
-    <Principles principles={content.principles} />
-    <Experience experience={content.experience} />
-    <Writing posts={posts} />
-    <Contact contact={content.contact} />
-  </main>
+<BaseLayout locale={locale} title={title} description={description} path={withLocale(locale, '/')} alternates={alternates}>
+  <!-- Runs before first paint: decides intro / focus / motion so the page never flashes the wrong state. -->
+  <script is:inline define:vars={{ sections: SECTIONS }}>
+    (function () {
+      var d = document.documentElement;
+      var q = new URLSearchParams(location.search);
+      var seen = false;
+      var hash = '';
+      try {
+        seen = sessionStorage.getItem('mc:seen') === '1';
+      } catch (e) {}
+      try {
+        hash = decodeURIComponent(location.hash.slice(1)).split('/')[0];
+      } catch (e) {}
+      var still = matchMedia('(prefers-reduced-motion: reduce)').matches;
+      var focus = sections.indexOf(hash) >= 0;
+      var intro = q.has('seek') || q.has('intro') || (!still && !seen && !focus && !q.has('move') && !q.has('run'));
+      d.classList.add('mc-js');
+      if (!still) d.classList.add('mc-arm');
+      if (intro) d.classList.add('mc-intro-on');
+      if (focus) d.dataset.focus = hash;
+      // If the module never arrives, do not leave the visitor behind the overlay or in front of hidden text.
+      setTimeout(function () {
+        if (!window.__mc) d.classList.remove('mc-arm', 'mc-intro-on');
+      }, 4000);
+    })();
+  </script>
+
+  <div class="mc" data-machine-root>
+    <MachineBar promptUser={content.promptUser} locale={locale} />
+
+    <main id="content">
+      <!-- 01 ASSET: the identity record. Identifiers are the stack and the languages. -->
+      <section class="mc-section mc-asset" id="asset" data-section data-dur="3.1" data-idle>
+        <div class="mc-wrap">
+          <SectionHead index={index('asset')} title={copy.sections.asset.title} readout={`${copy.feed} · ${meta.lastModified ?? ''}`} label />
+          <div class="mc-feed" data-fx="asset" data-label={`REC  ${copy.feed.toUpperCase()}`}>
+            <canvas class="mc-fx" aria-hidden="true"></canvas>
+            <div class="mc-subject" data-tone="cyan">
+              <div class="mc-lockup">
+              <p class="mc-tags">
+                <span
+                  class="mc-tag"
+                  data-m="t"
+                  data-at="0.1"
+                  data-pre={JSON.stringify([
+                    ['red', copy.scene.unidentified, 0.35],
+                    ['amber', copy.scene.analyzing, 0.95],
+                  ])}>{copy.scene.confirmed}</span
+                >
+                <span class="mc-live" data-m="f" data-at="1.5"><i aria-hidden="true"></i>{copy.monitoring}</span>
+              </p>
+              <h1 class="mc-name mc-lock" style={`--chars:${nameChars}`} data-m="l" data-at="0.1" data-box>
+                {
+                  nameLines.map((line) => (
+                    <>
+                      <span data-m="d" data-at="0.5" data-len="0.8">
+                        {line}
+                      </span>{' '}
+                    </>
+                  ))
+                }
+              </h1>
+              <p class="mc-match" aria-hidden="true">
+                <span>{copy.scene.match}</span>
+                <i><b data-m="x" data-at="0.45" data-len="0.95"></b></i>
+                <span data-m="n" data-at="0.45" data-len="0.95">100.0%</span>
+              </p>
+              </div>
+              <p class="mc-role" data-m="d" data-at="1.5">{basics.label}</p>
+              <p class="mc-loc" data-m="d" data-at="1.65">{[place, content.promptUser].filter(Boolean).join(' · ')}</p>
+            </div>
+          </div>
+
+          <div class="mc-file">
+            <div class="mc-brief">
+              <p class="mc-lead" data-m="r" data-at="1.8">{content.headline[1]}</p>
+              <p class="mc-lede" data-m="r" data-at="1.9">{content.lede}</p>
+              <h2 class="mc-label" data-m="d" data-at="2.05">{copy.behaviour}</h2>
+              <dl class="mc-kv">
+                {
+                  content.principles.map((row, i) => (
+                    <div data-m="r" data-at={(2.1 + i * 0.07).toFixed(2)}>
+                      <dt>{row.key}</dt>
+                      <dd>{row.value}</dd>
+                    </div>
+                  ))
+                }
+              </dl>
+            </div>
+
+            <div class="mc-idents">
+              <h2 class="mc-label" data-m="d" data-at="1.8">{copy.identifiers}</h2>
+              <dl class="mc-groups">
+                {
+                  content.skillGroups.map((group, i) => (
+                    <div>
+                      <dt data-m="d" data-at={(1.9 + i * 0.14).toFixed(2)}>
+                        {group.category}
+                      </dt>
+                      <dd>
+                        <ul class="mc-chipset">
+                          {group.items.map((item, j) => (
+                            <li data-m="r" data-at={(1.95 + i * 0.14 + Math.min(j, 12) * 0.03).toFixed(2)} data-len="0.3">
+                              {item}
+                            </li>
+                          ))}
+                        </ul>
+                      </dd>
+                    </div>
+                  ))
+                }
+                {
+                  content.spoken.length > 0 && (
+                    <div>
+                      <dt data-m="d" data-at={(1.9 + content.skillGroups.length * 0.14).toFixed(2)}>
+                        {copy.speaks}
+                      </dt>
+                      <dd>
+                        <ul class="mc-spoken">
+                          {content.spoken.map((entry, j) => (
+                            <li data-m="r" data-at={(1.95 + content.skillGroups.length * 0.14 + j * 0.06).toFixed(2)}>
+                              {entry.language} <span>{entry.fluency}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </dd>
+                    </div>
+                  )
+                }
+              </dl>
+            </div>
+          </div>
+          <p class="mc-excerpt">{copy.excerptEnds} <button type="button" data-run="all">{copy.fullFile}</button></p>
+        </div>
+      </section>
+
+      <!-- 02 ASSOCIATIONS: employers as tracked entities wired to the asset. -->
+      <section class="mc-section" id="associations" data-section data-dur={(selectAt + 1.5).toFixed(2)} data-idle data-select-at={selectAt.toFixed(2)}>
+        <div class="mc-wrap">
+          <SectionHead
+            index={index('associations')}
+            title={copy.sections.associations.title}
+            readout={`${pad(jobs.length)} ${copy.sections.associations.unit}`}
+            sub={copy.sections.associations.sub}
+          />
+          <div class="mc-graph" data-fx="associations">
+            <canvas class="mc-fx" aria-hidden="true"></canvas>
+            <div class="mc-links">
+              <p class="mc-node" data-tone="cyan">
+                <span class="mc-tag" data-m="d" data-at="0.3">{copy.scene.asset}</span>
+                <span class="mc-node-box mc-lock" data-m="l" data-at="0.25" data-node><span data-m="d" data-at="0.3">{user}</span></span>
+              </p>
+              <ol class="mc-ents" data-ents>
+                {
+                  jobs.map((job, i) => (
+                    <li>
+                      <a
+                        class="mc-ent mc-lock"
+                        href={`#associations/${job.id}`}
+                        data-ent={`associations/${job.id}`}
+                        data-m="l"
+                        data-at={(0.55 + i * 0.13).toFixed(2)}
+                      >
+                        <span class="mc-ent-name" data-m="d" data-at={(0.58 + i * 0.13).toFixed(2)}>
+                          {job.company}
+                        </span>
+                        <span class:list={['mc-ent-when', { 'is-current': job.current }]} data-m="f" data-at={(0.7 + i * 0.13).toFixed(2)}>
+                          {job.period}
+                        </span>
+                      </a>
+                    </li>
+                  ))
+                }
+              </ol>
+            </div>
+            <div class="mc-records">
+              {
+                jobs.map((job) => (
+                  <article class="mc-record" id={`associations/${job.id}`} data-cues data-tone={job.current ? 'green' : 'white'}>
+                    <header>
+                      <span class="mc-tag" data-m="d" data-at="0">
+                        {copy.affiliation} · {job.current ? copy.active : copy.archived}
+                      </span>
+                      <span class="mc-record-when" data-m="f" data-at="0.1">
+                        {job.period}
+                      </span>
+                    </header>
+                    <h3 data-m="d" data-at="0.05">
+                      {job.url ? (
+                        <a href={job.url} target="_blank" rel="noreferrer noopener">
+                          {job.company}
+                          <span aria-hidden="true"> ↗</span>
+                        </a>
+                      ) : (
+                        job.company
+                      )}
+                    </h3>
+                    <p class="mc-record-role" data-m="d" data-at="0.15">
+                      {job.title}
+                    </p>
+                    {job.location && (
+                      <p class="mc-record-loc" data-m="d" data-at="0.25">
+                        {job.location}
+                      </p>
+                    )}
+                    {job.summary !== job.highlights[0] && (
+                      <p class="mc-record-sum" data-m="r" data-at="0.3">
+                        {job.summary}
+                      </p>
+                    )}
+                    <ul class="mc-record-list">
+                      {job.highlights.map((line, j) => (
+                        <li data-m="r" data-at={(0.36 + Math.min(j, 8) * 0.06).toFixed(2)}>
+                          {line}
+                        </li>
+                      ))}
+                    </ul>
+                  </article>
+                ))
+              }
+            </div>
+          </div>
+          <p class="mc-excerpt">{copy.excerptEnds} <button type="button" data-run="all">{copy.fullFile}</button></p>
+        </div>
+      </section>
+
+      <!-- 03 PROJECTS: each one a target that gets acquired and classified. -->
+      <section class="mc-section" id="projects" data-section data-dur="3">
+        <div class="mc-wrap">
+          <SectionHead
+            index={index('projects')}
+            title={copy.sections.projects.title}
+            readout={`${pad(projects.length)} ${copy.sections.projects.unit}`}
+            sub={copy.sections.projects.sub}
+          />
+          <div class="mc-targets" data-fx="projects">
+            <canvas class="mc-fx is-over" aria-hidden="true"></canvas>
+            {
+              projects.map((project, i) => (
+                <article class="mc-target" id={project.id} data-g data-tone={statusTone(project.status)}>
+                  <p class="mc-tags">
+                    <span class="mc-tag" data-m="t" data-at="0.1" data-pre={JSON.stringify([['amber', copy.classifying, 0.5]])}>
+                      {project.statusLabel}
+                    </span>
+                    <span class="mc-target-meta" data-m="f" data-at="0.15">
+                      {copy.target} {pad(i + 1)}
+                      {project.entity && ` · @ ${project.entity}`}
+                    </span>
+                  </p>
+                  <div class="mc-target-box mc-lock" data-m="l" data-at="0">
+                    <h3 data-m="d" data-at="0.2" data-len="0.5">
+                      {project.slug}
+                    </h3>
+                    <p data-m="r" data-at="0.6">
+                      {project.description}
+                    </p>
+                    <ul class="mc-chipset">
+                      {project.tags.map((tag, j) => (
+                        <li data-m="r" data-at={(0.7 + j * 0.05).toFixed(2)} data-len="0.3">
+                          {tag}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                </article>
+              ))
+            }
+          </div>
+          <p class="mc-excerpt">{copy.excerptEnds} <button type="button" data-run="all">{copy.fullFile}</button></p>
+        </div>
+      </section>
+
+      <!-- 04 WRITING: articles as intercepted transmissions that decode. -->
+      <section class="mc-section" id="writing" data-section data-dur={(2 + posts.length * 0.2).toFixed(2)} data-idle>
+        <div class="mc-wrap">
+          <SectionHead
+            index={index('writing')}
+            title={copy.sections.writing.title}
+            readout={`${pad(posts.length)} ${copy.sections.writing.unit}`}
+            sub={copy.sections.writing.sub}
+          />
+          <div class="mc-txs" data-fx="writing">
+            <canvas class="mc-fx is-over" aria-hidden="true"></canvas>
+            <ol>
+            {
+              posts.map((post, i) => (
+                <li id={post.id} data-g data-base={(0.3 + i * 0.2).toFixed(2)} data-tone="green">
+                  <a class="mc-tx mc-lock" href={post.href} data-m="l" data-at="0">
+                    <span class="mc-wave" data-wave aria-hidden="true" />
+                    <span class="mc-tx-meta">
+                      <span class="mc-tag" data-m="t" data-at="0.05" data-pre={JSON.stringify([['red', copy.intercepting, 0.95]])}>
+                        {copy.decoded}
+                      </span>
+                      <span data-m="f" data-at="0.2">
+                        {copy.transmission} {String(posts.length - i).padStart(3, '0')} · <time datetime={post.iso}>{post.date}</time> · {post.minutes}{' '}
+                        {content.article.minRead}
+                      </span>
+                    </span>
+                    <h3 data-m="d" data-at="0.25" data-len="0.8">
+                      {post.title}
+                    </h3>
+                    <span class="mc-tx-desc" data-m="r" data-at="1">
+                      {post.description}
+                    </span>
+                    <span class="mc-tx-read" data-m="r" data-at="1.15">
+                      {copy.read} <span aria-hidden="true">→</span>
+                    </span>
+                  </a>
+                </li>
+              ))
+            }
+            </ol>
+          </div>
+          <p class="mc-excerpt">{copy.excerptEnds} <button type="button" data-run="all">{copy.fullFile}</button></p>
+        </div>
+      </section>
+
+      <!-- 05 SIMULATION: tic-tac-toe against a minimax that shows its search. -->
+      <section class="mc-section" id="simulation" data-section data-dur="2.3">
+        <div class="mc-wrap">
+          <SectionHead index={index('simulation')} title={copy.sections.simulation.title} sub={copy.sections.simulation.sub} />
+          <div class="mc-sims" data-fx="simulation">
+            <canvas class="mc-fx" aria-hidden="true"></canvas>
+            <p class="mc-sims-count"><b data-m="n" data-at="0.3" data-len="1.5">255,168</b> {copy.outcomes}</p>
+          </div>
+          <div class="mc-sim mc-lock" data-m="l" data-at="0.45">
+            <div data-m="f" data-at="0.6" data-len="0.6">
+              <TicTacToe />
+            </div>
+          </div>
+          <p class="mc-excerpt">{copy.excerptEnds} <button type="button" data-run="all">{copy.fullFile}</button></p>
+        </div>
+      </section>
+
+      <!-- 06 CONTACT: an open channel, and the dossier (the resume PDF). -->
+      <section class="mc-section" id="contact" data-section data-dur="2.6" data-idle>
+        <div class="mc-wrap">
+          <SectionHead index={index('contact')} title={copy.sections.contact.title} />
+          <div class="mc-channel" data-tone="green">
+            <div class="mc-carrier" data-fx="contact">
+              <canvas class="mc-fx" aria-hidden="true"></canvas>
+            </div>
+            <p class="mc-tags">
+              <span class="mc-tag" data-m="t" data-at="0.15" data-pre={JSON.stringify([['amber', copy.handshake, 1.1]])}>{copy.channelOpen}</span>
+            </p>
+            <p class="mc-call" data-m="r" data-at="0.5">{content.contact.heading}</p>
+            {
+              primary && (
+                <p class="mc-primary" data-tone="cyan">
+                  <a class="mc-lock" href={primary.href} data-m="l" data-at="1.25">
+                    <span data-m="d" data-at="1.3">{primary.label}</span>
+                  </a>
+                </p>
+              )
+            }
+            <ul class="mc-outs">
+              {
+                secondary.map((link, i) => (
+                  <li data-m="r" data-at={(1.5 + i * 0.1).toFixed(2)}>
+                    <a href={link.href} target="_blank" rel="noreferrer noopener">
+                      {link.label}
+                    </a>
+                  </li>
+                ))
+              }
+              {
+                dossier && (
+                  <li data-m="r" data-at={(1.5 + secondary.length * 0.1).toFixed(2)}>
+                    <a class="mc-dossier" href={dossier.href} download>
+                      <span>{copy.dossier}</span>
+                      {linkName(dossier.label)} <span aria-hidden="true">↓</span>
+                      <span class="mc-vh">{copy.download}</span>
+                    </a>
+                  </li>
+                )
+              }
+            </ul>
+          </div>
+          <p class="mc-eof" data-m="f" data-at="2">
+            <span>{copy.endOfFile}</span>
+            {meta.lastModified && <span>{copy.lastModified} {meta.lastModified}</span>}
+            <span>{basics.name}</span>
+          </p>
+          <p class="mc-excerpt">{copy.excerptEnds} <button type="button" data-run="all">{copy.fullFile}</button></p>
+        </div>
+      </section>
+    </main>
+
+    <!-- The command line: section names are commands, chips are for people who will not type. -->
+    <div class="mc-dock" data-dock>
+      <div class="mc-wrap mc-dock-wrap">
+        <div class="mc-out" data-out>
+          <button class="mc-out-x mc-js-only" type="button" data-close aria-label={copy.closeLabel}>esc</button>
+          <div class="mc-log" data-output role="log" aria-live="polite" aria-label={copy.logLabel}></div>
+        </div>
+        <div class="mc-dock-row">
+          <form class="mc-prompt mc-js-only" data-form autocomplete="off">
+            <label for="mc-input">
+              <span class="mc-vh">{copy.inputLabel}</span>
+              <span class="mc-ps1" aria-hidden="true">&gt;</span>
+            </label>
+            <span class="mc-field">
+              <span class="mc-ghost" data-ghost aria-hidden="true"></span>
+              <input
+                id="mc-input"
+                type="text"
+                name="command"
+                placeholder={copy.placeholder}
+                data-short={copy.placeholderShort}
+                autocomplete="off"
+                autocapitalize="none"
+                autocorrect="off"
+                spellcheck="false"
+                enterkeyhint="go"
+              />
+            </span>
+            <kbd class="mc-key mc-key-slash" aria-hidden="true">/</kbd>
+            <button class="mc-key mc-key-tab" type="button" data-complete tabindex="-1" aria-label={copy.completeLabel}>tab</button>
+            <button class="mc-enter" type="submit" aria-label={copy.runLabel}>↵</button>
+          </form>
+          <nav class="mc-chips" aria-label={copy.chipsLabel}>
+            <button class="mc-chip mc-chip-focus" type="button" data-run="all"><span>{copy.fullFile}</span></button>
+            {
+              chips.map((chip) =>
+                chip.href ? (
+                  <a class="mc-chip" href={chip.href} data-run={chip.run} data-chip={chip.section} download={chip.download} hreflang={chip.hreflang}>
+                    <span>{chip.label}</span>
+                  </a>
+                ) : (
+                  <button class="mc-chip mc-js-only" type="button" data-run={chip.run}>
+                    <span>{chip.label}</span>
+                  </button>
+                ),
+              )
+            }
+          </nav>
+        </div>
+      </div>
+    </div>
+
+    <!-- The intro: a tightened cut of the Machine timeline, played once per tab. Motion only. -->
+    <div class="mc-intro" data-intro aria-hidden="true">
+      <canvas data-machine={JSON.stringify(intro)} data-copy={JSON.stringify(copy.scene)}></canvas>
+      <p class="mc-skip">{copy.skip}</p>
+    </div>
+  </div>
+
+  <script type="application/json" id="mc-data" is:inline set:html={json(runtime)} />
+  <script>
+    import '../components/machine/runtime';
+  </script>
 </BaseLayout>

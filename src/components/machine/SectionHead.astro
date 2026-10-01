@@ -1,0 +1,26 @@
+---
+// Section header in the Machine's grammar: index tag, title, hairline, readout,
+// and one sentence underneath. The `data-m` attributes are movement cues
+// (see motion.ts); without JavaScript they are inert and everything shows.
+interface Props {
+  /** 1-based position on the page, shown as "02". */
+  index: number;
+  title: string;
+  /** Short status on the right, e.g. "05 targets". */
+  readout?: string;
+  sub?: string;
+  /** The asset section's title is the h1 below it, so its label is not a heading. */
+  label?: boolean;
+}
+
+const { index, title, readout, sub, label } = Astro.props;
+const Title = label ? 'p' : 'h2';
+---
+
+<header class="mc-head">
+  <span class="mc-idx" aria-hidden="true" data-m="d" data-at="0">{String(index).padStart(2, '0')}</span>
+  <Title class="mc-title" data-m="d" data-at="0.05">{title}</Title>
+  <span class="mc-rule" aria-hidden="true" data-m="x" data-at="0.1"></span>
+  {readout && <p class="mc-read" data-m="d" data-at="0.3">{readout}</p>}
+</header>
+{sub && <p class="mc-sub" data-m="r" data-at="0.25">{sub}</p>}

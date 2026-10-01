@@ -1,9 +1,14 @@
 ---
+// An article: a transmission the Machine intercepted. The header decodes in
+// under two seconds (signal strip, classification tag, title), then the page
+// is plain prose. Without JavaScript, or under reduced motion, it is just there.
+import '../components/machine/machine.css';
 import { render, type CollectionEntry } from 'astro:content';
 import BaseLayout from './BaseLayout.astro';
-import TopBar from '../components/TopBar.astro';
+import MachineBar from '../components/machine/MachineBar.astro';
+import { machineCopy } from '../components/machine/copy';
 import { getContent } from '../data/content';
-import { getResume, otherLocale, type Locale } from '../data/resume';
+import { getResume, otherLocale, withLocale, type Locale } from '../data/resume';
 import { findTranslation, readingTime, articlePath } from '../data/writing';
 
 interface Props {
@@ -18,6 +23,7 @@ const translation = findTranslation(entry, otherLocale(locale));
 const translationHref = translation ? articlePath(otherLocale(locale), translation.data.slug) : undefined;
 
 const content = getContent(locale);
+const copy = machineCopy[locale];
 const { basics } = getResume(locale);
 const dateLocale = locale === 'en' ? 'en-US' : 'es-ES';
 const dateLabel = entry.data.date.toLocaleDateString(dateLocale, {
@@ -39,20 +45,80 @@ const alternates = translationHref ? [{ hreflang: otherLocale(locale), path: tra
   path={path}
   alternates={alternates}
 >
-  <TopBar promptUser={content.promptUser} promptSuffix={content.promptSuffix} locale={locale} switchHref={translationHref} />
-  <main class="article">
-    <p class="prompt">$ cat writing/{entry.data.slug}.md</p>
-    <h1>{entry.data.title}</h1>
-    <p class="meta">{dateLabel} · {minutes} {content.article.minRead}</p>
-    <div class="prose">
-      <Content />
-    </div>
-    {
-      translationHref && (
-        <p class="translation-link">
-          <a href={translationHref}>{content.article.translationLink}</a>
-        </p>
-      )
+  <script is:inline>
+    (function () {
+      var d = document.documentElement;
+      d.classList.add('mc-js');
+      if (!matchMedia('(prefers-reduced-motion: reduce)').matches) d.classList.add('mc-arm');
+      // If the module never arrives, do not leave the reader in front of hidden text.
+      setTimeout(function () {
+        if (!window.__mc) d.classList.remove('mc-arm');
+      }, 3000);
+    })();
+  </script>
+
+  <div class="mc mc-article" data-article>
+    <MachineBar
+      promptUser={content.promptUser}
+      locale={locale}
+      switchHref={translationHref}
+      crumb={{ label: copy.sections.writing.title, href: `${withLocale(locale, '/')}#writing` }}
+    />
+    <main id="content">
+      <article>
+        <header class="mc-article-head" data-fx="writing" data-tone="green">
+          <canvas class="mc-fx is-over" aria-hidden="true"></canvas>
+          <span class="mc-wave" data-wave aria-hidden="true"></span>
+          <p class="mc-tags">
+            <span class="mc-tag" data-m="t" data-at="0.05" data-pre={JSON.stringify([['red', copy.intercepted, 0.9]])}>{copy.decoded}</span>
+          </p>
+          <h1 class="mc-article-title" data-m="d" data-at="0.25" data-len="0.8">{entry.data.title}</h1>
+          <p class="mc-article-meta" data-m="f" data-at="1.05">
+            <time datetime={entry.data.date.toISOString().slice(0, 10)}>{dateLabel}</time> · {minutes}{' '}
+            {content.article.minRead}
+          </p>
+        </header>
+        <div class="prose" data-m="r" data-at="1.1" data-len="0.6">
+          <Content />
+        </div>
+        {
+          translationHref && (
+            <p class="translation-link">
+              <a href={translationHref} hreflang={otherLocale(locale)}>
+                {content.article.translationLink}
+              </a>
+            </p>
+          )
+        }
+      </article>
+    </main>
+  </div>
+
+  <script>
+    // The entrance: one movement, played once, then the clock stops for good.
+    import { createMovement } from '../components/machine/motion';
+
+    const root = document.querySelector<HTMLElement>('[data-article]');
+    if (root) {
+      const params = new URLSearchParams(location.search);
+      const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+      const movement = createMovement(root, reduced, () => movement.settle());
+      (window as unknown as { __mc: boolean }).__mc = true;
+      if (reduced) movement.settle();
+      else {
+        // Debug: ?move=0.5 freezes the entrance half way.
+        movement.reset();
+        movement.frame((Number(params.get('move')) || 0) * 1.7, true);
+      }
+      root.dataset.played = '';
+      if (!reduced && !params.has('move')) {
+        const origin = performance.now();
+        const tick = (now: number) => {
+          if (movement.frame((now - origin) / 1000, true)) requestAnimationFrame(tick);
+          else movement.settle();
+        };
+        requestAnimationFrame(tick);
+      }
     }
-  </main>
+  </script>
 </BaseLayout>
