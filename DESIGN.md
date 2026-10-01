@@ -10,32 +10,42 @@ How design work happens in this repo. Two parts: the five patterns every strong 
 4. **Imagery is everything or almost nothing.** Full-bleed photography/video, or one made object that does all the work. Never stock, illustration, or decorative icons.
 5. **Motion and shadow barely specified.** One hover ease (~0.2s), one scroll-linked reveal, near-zero shadows; separation by surface color and whitespace. Pick the radius pair first and hold it everywhere — radius is the fastest tell between systems.
 
-## This site's answers (the "terminal" system)
+## This site's answers (the "Machine" system)
 
-- **The place:** a senior engineer's terminal at night. Shell-prompt section headers (`$ whoami`, `$ cat stack.txt`) are the signature element.
-- **Palette:** near-black blue ramp (`#0b0e13` bg → `#0e1219` panel → `#1c232d` border → `#2e3947` hover) with text steps `#3d4754 → #5d6a79 → #7d8a99 → #8d99a8 → #c7d1dc → #f0f4f8`. Accents: green `#57d9a3` (prompts, active states) and cyan `#6ee0ff` (links, stats) — treat green as structure, cyan as the hoarded accent.
-- **Type:** IBM Plex Mono (prompts, nav, tags, dates, panels) + IBM Plex Sans (headings, prose). Latin subsets only, self-hosted.
-- **Imagery:** none — the terminal chrome IS the made object. No icons beyond text glyphs (`●`, `▋`, `↗`, `·`).
-- **Motion:** hero typing (CSS `steps()`), blinking `▋` cursors, border-color hovers. Everything off under `prefers-reduced-motion`. **Radius: 6px, everywhere.**
-- Dark-only by design; tokens live as `:root` custom properties in `src/styles/global.css`.
+The home page and the article pages. The lab pages (`/lab/*`) keep the older terminal system they were sketched in; see the end of this section.
+
+- **The place:** you are looking at the Machine's file on one person. A surveillance system (Person of Interest) has found the site owner, classified them as "the asset", and keeps the record open: who they are, who they are linked to, what they built, what they transmitted. Every section is a view of that file, and every motion is the Machine doing its job (acquiring, analysing, classifying, decoding), never decoration.
+- **Palette:** the same near-black blue ramp (`#0b0e13` bg → `#0e1219` panel → `#1c232d` border → `#2e3947` hover) and text steps (`#5d6a79` decorative labels → `#7d8a99` small informational text → `#8d99a8` prose → `#c7d1dc` → `#f0f4f8`). Colour is classification, and each one means exactly one thing:
+  - **white** `#f0f4f8`: unclassified. Default brackets, index tags, neutral verdicts.
+  - **red** `#ff5c5c`: unidentified, or recording. The REC light, a tag before analysis, an error in the prompt.
+  - **amber** `#ffc857`: under analysis / in progress. Tags mid-movement, an `active` project, focus-mode controls ("you are seeing an excerpt").
+  - **cyan** `#6ee0ff`: the confirmed asset, and anything you can act on (links, the prompt, the selected entity, the current chip).
+  - **green** `#57d9a3`: system nominal. Monitoring, a `production` project, a current employer, a decoded transmission, an open channel.
+  A colour used for anything else is a bug. Tokens live in `src/styles/global.css`; the canvas reads the same values from `src/components/machine/draw.ts`.
+- **Type:** IBM Plex Mono for everything the Machine says (titles, tags, labels, names, the prompt) and IBM Plex Sans for everything a person wrote (summaries, highlights, descriptions, article prose). Machine-speak is uppercase with tracking; content keeps its own case. The name is the one display size (up to 88px); section titles 22px; prose 14.5 to 16.5px.
+- **Imagery:** none. The made objects are the camera feed around the name and the canvas layers (map, wires, scan bars, waveforms).
+- **Shape:** square corners everywhere, and no borders where brackets can do the job: a thing the Machine has locked onto gets four corner brackets and a filled classification tag above its top-left corner. Shadows: none (the command output uses a solid outline of the background colour to separate itself).
+- **Grammar of a section:** index tag + title + hairline + a short readout on the right, one sentence in sans under it, then the content. New sections reuse this (`SectionHead.astro`) and the bracket/tag primitives (`.mc-lock`, `.mc-tag`).
+- **Motion:** this is a motion site now, with JavaScript and canvas. The rules that keep it honest:
+  1. **Content first.** Every section is server-rendered semantic HTML that reads correctly with JavaScript off. Canvas is `aria-hidden` and never carries information. Text that "decodes" keeps its real text in the DOM the whole time; the scrambled frame is painted over it from an attribute.
+  2. **One intro, once.** A ~11s cut of the authored timeline (boot, sweep, acquire, identify) plays once per tab, never with a hash in the URL, and any key, tap or scroll ends it immediately.
+  3. **One movement per section**, under three seconds, played when the section scrolls into view or is navigated to: asset = acquired and confirmed, associations = wired to the asset one per beat, projects = scanned and classified, writing = intercepted and decoded, simulation = games played out, contact = handshake to open channel. An article page gets one short entrance (under two seconds), then nothing moves.
+  4. **Pure functions of time.** The intro (`window.seek(seconds)`, `?seek=`) and every movement (`?move=0..1`) render from a time value, so any frame can be reproduced, captured or tested.
+  5. **Quiet when idle.** After a movement only ambient canvas motion remains (map, packets, carrier), at half frame rate, paused off screen. Device pixel ratio is capped at 2.
+  6. **`prefers-reduced-motion: reduce`:** no intro, no movements, no loops. Content is simply present and the canvases draw one settled frame.
+- **Navigation:** sections are addressable (`/#projects`, `/#writing`, `/#projects/<name>`). A hash opens *just that section* (focus mode) with an amber way back to the full file. The docked command line takes section names as commands, with a ghost suggestion and Tab completion; the chips above it do the same for people who will not type.
+- **Lab pages** (`/lab/`, `/lab/machine/`, `/lab/shell/`, `/lab/tictactoe/`) are the experiments this system came from. They keep the terminal chrome (`$ prompt` lines, green dot, 6px radius) and are not linked from the site. The tic-tac-toe panel is reused on the home page with its corners squared.
 
 ## Briefing a design agent
 
-Give it: the north-star sentence, the neutral ramp + accent with the one-per-screen rule, the two families with the size range, the radius (6px), the section gap (88px) — then the specific task. Run an "AI tells" audit pass on any finished design and remove one decoration before shipping. Useful session tools when available: the design canvas skill for side-by-side directions (stable names A/B/C, main = leading candidate), aesthetic-direction references for naming the moves, deterministic checkers for contrast/padding.
+Give it: the north-star sentence (the Machine's file on the asset), the neutral ramp, the five classification colours with their single meanings, the two families and who speaks in which, square corners + brackets + tags, the six motion rules, then the specific task. Run an "AI tells" audit pass on any finished design and remove one decoration before shipping. Useful session tools when available: the design canvas skill for side-by-side directions (stable names A/B/C, main = leading candidate), aesthetic-direction references for naming the moves, deterministic checkers for contrast/padding.
 
-## Next-session candidates (obsidianui.dev research, 2026-09-22)
-
-ObsidianUI is a React + Tailwind + Motion/GSAP copy-paste library — nothing imports directly (zero-JS budget), but these ideas port to pure CSS and fit the terminal rules:
-
-1. **Static dot-grid hero texture** — tiled `radial-gradient` one step above `#0b0e13`, radially masked to fade at the edges. Depth without a new color or JS. Cheapest win.
-2. **CSS-only role stream after `$ whoami`** — fixed prompt + vertically cycling role list (`steps()` keyframe on stacked lines, `mask-image` center-focus fade). Extends the existing typing grammar; reduced-motion shows the first role statically.
-3. **Hover file-tree reveal on project panels** — hovering a card expands a mono `tree`-style listing (stack, key files, links) via `max-height` + `opacity`. Deepens both panel grammar and shell metaphor.
-- Runner-up: 2px accent scroll-progress bar via CSS `animation-timeline: scroll()` (progressive enhancement, degrades to nothing).
-- Also cheap and on-theme: `Kbd` keycap styling for shortcuts/command hints; accent-only `background-clip: text` fill on link hover.
-- Rejected from their catalog (violate the rules): cursor effects, 3D flips, glassmorphism, multi-color glow, scroll hijacking, continuous ambient motion.
+Checking motion: stills cannot judge it. Freeze frames with `?seek=` and `?move=`, and drive a real browser for anything that depends on the clock, scrolling or typing.
 
 ## Rules
 
-- New sections must reuse the panel grammar (prompt line + bordered panel + mono body) — no new visual primitives without updating this file first.
-- Any 3D/experiment (e.g. WASM checkers board) lives inside a panel and obeys the palette; it never introduces its own colors.
-- Blog/article pages inherit the same tokens; prose max-width ~720px.
+- New sections reuse the section grammar (index tag, title, readout, one sentence) and the bracket/tag primitives. No new visual primitive, and no new colour meaning, without updating this file first.
+- Every piece of motion must be explainable as something the Machine is doing to the content. If it cannot be, it is decoration: cut it.
+- Zero personal facts in code. Names, employers, projects, skills and articles come from the resume data and the writing collection; machine-speak and UI strings live in `src/components/machine/copy.ts`, in both locales.
+- Any experiment (e.g. the tic-tac-toe panel) lives inside the system's frame and obeys the palette; it never introduces its own colours.
+- Article prose stays plain: sans, max-width 720px, nothing moving after the entrance.
