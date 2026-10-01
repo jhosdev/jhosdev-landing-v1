@@ -40,7 +40,7 @@ const posts: Post[] = entries
   }));
 
 // `links/<name>`: the mailto is "email", the rest keep their label minus the arrow.
-const linkName = (label: string, primary?: boolean) => (primary ? 'email' : label.replace(/\s*↗$/, ''));
+const linkName = (label: string, primary?: boolean) => (primary ? 'email' : label.replace(/\s*[↗↓]$/, ''));
 const links = content.contact.links.map((link) => ({ ...link, name: linkName(link.label, link.primary) }));
 
 const files: ShellFile[] = [

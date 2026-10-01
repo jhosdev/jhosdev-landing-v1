@@ -3,7 +3,8 @@
 // comes from meta.site / projects[] in src/data/resume.{en,es}.json so it can
 // never drift from — or duplicate — that data. What's left here is pure UI
 // chrome that isn't a fact about the person: skill group-name lookups, the
-// "now" label, and article page strings.
+// "now" label, and article page strings. (Machine-speak and the home page's
+// UI strings live in src/components/machine/copy.ts.)
 
 import { getResume, type Locale } from './resume';
 import type { PortfolioContent } from './types';
@@ -55,11 +56,36 @@ function yearOf(date: string): string {
   return date.split('-')[0];
 }
 
+/** "Acme Co (US)" -> "acme-co-us": ids for URL hashes and `open <name>`. */
+export function slugify(text: string): string {
+  const slug = text
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  // Cut long names so the hash stays short enough to share.
+  return slug.slice(0, 40).replace(/-+$/, '') || 'entity';
+}
+
+function uniqueIds(names: string[]): string[] {
+  const seen = new Map<string, number>();
+  return names.map((name) => {
+    const id = slugify(name);
+    const n = (seen.get(id) ?? 0) + 1;
+    seen.set(id, n);
+    return n > 1 ? `${id}-${n}` : id;
+  });
+}
+
 export function getContent(locale: Locale): PortfolioContent {
   const resume = getResume(locale);
   const { basics, work, skills, projects, meta } = resume;
+  const workIds = uniqueIds(work.map((job) => job.name));
   const site = meta.site;
   const c = curated[locale];
+  const groupNames: string[] = Object.values(c.groupNames);
+  const localeGroups = skills.filter((s) => groupNames.includes(s.name));
 
   const github = basics.profiles.find((p) => p.network === 'GitHub');
   const linkedin = basics.profiles.find((p) => p.network === 'LinkedIn');
@@ -84,6 +110,7 @@ export function getContent(locale: Locale): PortfolioContent {
         statusLabel: p.statusLabel ?? (p.status as string),
         description: p.description,
         tags: p.keywords,
+        entity: p.entity,
       })),
     stack: [
       { category: 'languages', items: skillGroup(skills, c.groupNames.languages) },
@@ -94,12 +121,20 @@ export function getContent(locale: Locale): PortfolioContent {
       // against hardcoded names, so a resume rename here can't silently empty this row.
       { category: 'ai', items: aiEngineering },
     ],
+    // The sample file carries both locales' groups; a real one only its own.
+    skillGroups: (localeGroups.length ? localeGroups : skills).map((s) => ({ category: s.name, items: s.keywords })),
+    spoken: resume.languages ?? [],
     principles: site.principles,
-    experience: work.map((job) => ({
+    experience: work.map((job, i) => ({
       period: `${yearOf(job.startDate)} — ${job.endDate ? yearOf(job.endDate) : c.nowLabel}`,
       title: job.position,
       company: job.name,
       summary: job.summary ?? job.highlights[0],
+      id: workIds[i],
+      current: !job.endDate,
+      location: job.location,
+      url: job.url,
+      highlights: job.highlights,
     })),
     contact: {
       heading: site.contactHeading,
@@ -108,7 +143,7 @@ export function getContent(locale: Locale): PortfolioContent {
         ...(github ? [{ label: 'github ↗', href: github.url }] : []),
         ...(linkedin ? [{ label: 'linkedin ↗', href: linkedin.url }] : []),
         // EN PDF for both locales for now — resume.es.json content is stale, deferred.
-        { label: 'resume.pdf ↗', href: '/resume.pdf' },
+        { label: 'resume.pdf ↓', href: '/resume.pdf', download: true },
       ],
     },
     article: c.article,

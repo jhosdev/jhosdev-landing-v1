@@ -64,6 +64,11 @@ export interface ResumeSkill {
   keywords: string[];
 }
 
+export interface ResumeLanguage {
+  language: string;
+  fluency: string;
+}
+
 export interface ResumeProject {
   /** Rendered as the project card title (Project.slug) */
   name: string;
@@ -100,6 +105,7 @@ export interface Resume {
   education: ResumeEducation[];
   awards: ResumeAward[];
   skills: ResumeSkill[];
+  languages?: ResumeLanguage[];
   meta: ResumeMeta;
 }
 

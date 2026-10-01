@@ -15,6 +15,8 @@ export interface Project {
   description: string;
   /** Lowercase tech tags rendered as "kafka · dynamodb · …" */
   tags: string[];
+  /** Who it was built for, e.g. an employer name from work[] */
+  entity?: string;
   href?: string;
 }
 
@@ -30,6 +32,18 @@ export interface ExperienceEntry {
   title: string;
   company: string;
   summary: string;
+  /** URL-safe id derived from the company name, unique within the list */
+  id: string;
+  /** No end date in the resume: still there */
+  current: boolean;
+  location?: string;
+  url?: string;
+  highlights: string[];
+}
+
+export interface SpokenLanguage {
+  language: string;
+  fluency: string;
 }
 
 export interface Post {
@@ -54,6 +68,8 @@ export interface ContactLink {
   label: string;
   href: string;
   primary?: boolean; // primary = cyan, secondary = muted
+  /** Save the file instead of opening it (the resume PDF) */
+  download?: boolean;
 }
 
 export interface Principle {
@@ -72,6 +88,10 @@ export interface PortfolioContent {
   stats: Stat[];
   projects: Project[];
   stack: StackRow[];
+  /** Every skill group of this locale, as named in the resume: the full stack */
+  skillGroups: StackRow[];
+  /** Spoken languages, from resume languages[] */
+  spoken: SpokenLanguage[];
   principles: Principle[];
   experience: ExperienceEntry[];
   contact: { heading: string; links: ContactLink[] };
