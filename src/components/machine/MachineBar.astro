@@ -1,0 +1,49 @@
+---
+// The HUD strip across the top of the home and article pages: recording light,
+// the asset's handle, where you are, the dossier, the language switch.
+import { withLocale, otherLocale, type Locale } from '../../data/resume';
+import { machineCopy } from './copy';
+
+interface Props {
+  promptUser: string;
+  locale: Locale;
+  /** Root-relative path to this page's translation. Defaults to the other locale's home. */
+  switchHref?: string;
+  /** Breadcrumb after the handle on inner pages, e.g. the writing section. */
+  crumb?: { label: string; href: string };
+}
+
+const { promptUser, locale, switchHref, crumb } = Astro.props;
+const copy = machineCopy[locale];
+const home = withLocale(locale, '/');
+const other = otherLocale(locale);
+const otherHref = switchHref ?? withLocale(other, '/');
+---
+
+<header class="mc-bar">
+  <a class="mc-skip-link" href="#content">{copy.skipToContent}</a>
+  <a class="mc-bar-id" href={home}><i class="mc-rec" aria-hidden="true"></i>{promptUser}</a>
+  {
+    crumb ? (
+      <a class="mc-bar-now" href={crumb.href}>
+        <span aria-hidden="true">←</span> {crumb.label}
+      </a>
+    ) : (
+      <span class="mc-bar-now" data-now aria-hidden="true" />
+    )
+  }
+  <a class="mc-bar-pdf" href="/resume.pdf" download>resume.pdf <span aria-hidden="true">↓</span></a>
+  <span class="mc-lang">
+    {
+      (['en', 'es'] as const).map((l) =>
+        l === locale ? (
+          <span aria-current="true">{l}</span>
+        ) : (
+          <a href={otherHref} hreflang={l} lang={l}>
+            {l}
+          </a>
+        ),
+      )
+    }
+  </span>
+</header>
