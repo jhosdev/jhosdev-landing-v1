@@ -2,6 +2,7 @@
 import BaseLayout from './BaseLayout.astro';
 import TopBar from '../components/TopBar.astro';
 import Hero from '../components/Hero.astro';
+import BootScene from '../components/BootScene.astro';
 import Projects from '../components/Projects.astro';
 import Stack from '../components/Stack.astro';
 import Principles from '../components/Principles.astro';
@@ -49,6 +50,9 @@ const alternates = [
 >
   <TopBar promptUser={content.promptUser} promptSuffix={content.promptSuffix} locale={locale} />
   <main>
+    <section>
+      <BootScene label={content.promptUser.split('@')[0]} />
+    </section>
     <Hero content={content} />
     <Projects projects={content.projects} />
     <Stack stack={content.stack} />
