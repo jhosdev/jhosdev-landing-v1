@@ -1,0 +1,322 @@
+---
+// "The site IS a terminal": an alternative home page. The whole portfolio is
+// server-rendered as a session transcript (prompt line + output per section),
+// readable with JavaScript off. runtime.ts then adds the boot intro and the
+// working prompt, whose commands reprint these same nodes by `data-ref`.
+import '@fontsource/ibm-plex-mono/latin-700.css';
+import './shell.css';
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import ShellBlock from './ShellBlock.astro';
+import ShellBoot from './ShellBoot.astro';
+import ShellDock from './ShellDock.astro';
+import { getContent } from '../../data/content';
+import { getResume, withLocale, otherLocale, type Locale } from '../../data/resume';
+import { writingByLang, articlePath } from '../../data/writing';
+import type { Post } from '../../data/types';
+import type { ShellContext, ShellFile } from './commands';
+import { shellCopy } from './copy';
+
+interface Props {
+  locale: Locale;
+}
+
+const { locale } = Astro.props;
+const { basics } = getResume(locale);
+const content = getContent(locale);
+const copy = shellCopy[locale];
+const other = otherLocale(locale);
+const [user, host = 'prod'] = content.promptUser.split('@');
+const promptUser = `${user}@${host}`;
+const shellPath = (l: Locale) => withLocale(l, '/lab/shell/');
+
+const entries = await writingByLang(locale);
+const posts: Post[] = entries
+  .sort((a, b) => b.data.date.getTime() - a.data.date.getTime())
+  .map((entry) => ({
+    year: entry.data.date.getUTCFullYear(),
+    slug: `${entry.data.slug}.md`,
+    subtitle: entry.data.description,
+    href: articlePath(locale, entry.data.slug),
+  }));
+
+// `links/<name>`: the mailto is "email", the rest keep their label minus the arrow.
+const linkName = (label: string, primary?: boolean) => (primary ? 'email' : label.replace(/\s*↗$/, ''));
+const links = content.contact.links.map((link) => ({ ...link, name: linkName(link.label, link.primary) }));
+
+const files: ShellFile[] = [
+  { path: 'about.txt', ref: 'whoami' },
+  { path: 'stack.txt', ref: 'stack' },
+  { path: 'principles.txt', ref: 'principles' },
+  { path: 'experience.log', ref: 'experience' },
+  { path: 'contact.txt', ref: 'contact' },
+  ...links.filter((l) => l.name.includes('.')).map((l) => ({ path: l.name, href: l.href, external: true })),
+  ...content.projects.map((p) => ({ path: `projects/${p.slug}`, ref: `project:${p.slug}` })),
+  ...posts.map((p) => ({ path: `writing/${p.slug}`, ref: `post:${p.slug}`, href: p.href })),
+  ...links.filter((l) => !l.name.includes('.')).map((l) => ({ path: `links/${l.name}`, href: l.href, external: !l.primary })),
+];
+
+const context: ShellContext = {
+  user,
+  host,
+  locale,
+  files,
+  langHref: { en: shellPath('en'), es: shellPath('es') },
+  t: copy.t,
+};
+
+const chips = [
+  { label: 'help', run: 'help' },
+  { label: 'whoami', run: 'whoami', href: '#whoami' },
+  { label: 'projects', run: 'projects', href: '#projects' },
+  { label: 'stack', run: 'stack', href: '#stack' },
+  { label: 'experience', run: 'experience', href: '#experience' },
+  { label: 'writing', run: 'writing', href: '#writing' },
+  { label: 'contact', run: 'contact', href: '#contact' },
+  { label: 'ls', run: 'ls' },
+  { label: 'clear', run: 'clear' },
+  { label: `lang ${other}`, run: `lang ${other}`, href: shellPath(other) },
+];
+
+const [headlineTop, headlineSub] = content.headline;
+// The closing period is the one red mark on the headline.
+const topWords = headlineTop.replace(/\.$/, '').split(' ');
+const topHasDot = headlineTop.endsWith('.');
+const longestWord = Math.max(...headlineTop.split(' ').map((w) => w.length));
+const stackRows = content.stack.map((row) => ({ key: row.category, value: row.items.join(' · ') }));
+---
+
+<BaseLayout
+  locale={locale}
+  title={`${basics.name} — ${basics.label}`}
+  description={basics.summary.split('. ')[0] + '.'}
+  path={shellPath(locale)}
+  alternates={[{ hreflang: other, path: shellPath(other) }]}
+>
+  <!-- Runs before first paint: decides whether the intro plays, so the page never flashes under it. -->
+  <script is:inline>
+    (function () {
+      var d = document.documentElement;
+      var q = new URLSearchParams(location.search);
+      var seen = false;
+      try {
+        seen = sessionStorage.getItem('sh:booted') === '1';
+      } catch (e) {}
+      var still = matchMedia('(prefers-reduced-motion: reduce)').matches;
+      var intro = q.has('t') || q.has('intro') || (!still && !seen && !q.has('run') && !location.hash);
+      d.classList.add('sh-js', intro ? 'sh-intro' : 'sh-docked');
+      // If the module never arrives, do not leave the visitor behind the overlay.
+      if (intro)
+        setTimeout(function () {
+          if (!window.__sh) d.classList.replace('sh-intro', 'sh-docked');
+        }, 5000);
+    })();
+  </script>
+
+  <div class="sh-root" data-shell>
+    <header class="sh-bar">
+      <div class="sh-wrap">
+        <a class="sh-id" href={withLocale(locale, '/')} title={copy.exitLabel}>
+          <span class="sh-led" aria-hidden="true"></span>{promptUser}<span class="sh-path">:~/lab/shell</span>
+        </a>
+        <span class="sh-uptime" data-uptime aria-hidden="true">tty1</span>
+        <span class="sh-lang">
+          {
+            (['en', 'es'] as const).map((l) =>
+              l === locale ? (
+                <span aria-current="true">{l}</span>
+              ) : (
+                <a href={shellPath(l)} hreflang={l}>
+                  {l}
+                </a>
+              ),
+            )
+          }
+        </span>
+      </div>
+    </header>
+
+    <main>
+      <div class="sh-wrap">
+        <div data-session>
+          <ShellBlock id="whoami" cmd="whoami" promptUser={promptUser}>
+            <h1 class="sh-headline">
+              <span class="sh-top" style={`--chars:${headlineTop.length};--word:${longestWord}`}>
+                {
+                  topWords.map((word, i) => (
+                    <>
+                      <span class="sh-mask">
+                        <span class="sh-l sh-rise">{word}{i === topWords.length - 1 && topHasDot && <span class="sh-dot">.</span>}</span>
+                      </span>{' '}
+                    </>
+                  ))
+                }
+              </span>
+              <span class="sh-sub sh-l">{headlineSub}</span>
+            </h1>
+            <p class="sh-lede sh-l">{content.lede}</p>
+            <dl class="sh-stats">
+              {
+                content.stats.map((stat) => (
+                  <div class="sh-l sh-pop">
+                    <dt>{stat.label}</dt>
+                    <dd>{stat.value}</dd>
+                  </div>
+                ))
+              }
+            </dl>
+          </ShellBlock>
+
+          <ShellBlock id="projects" cmd="ls projects/" promptUser={promptUser} label={copy.sections.projects}>
+            <p class="sh-total sh-l">total {content.projects.length}</p>
+            <div class="sh-projects">
+              {
+                content.projects.map((project) => (
+                  <article class="sh-project sh-l" data-ref={`project:${project.slug}`} data-wrap>
+                    <span class="sh-perm" aria-hidden="true">
+                      drwxr-xr-x
+                    </span>
+                    <div>
+                      <header>
+                        <h3>
+                          {project.slug}
+                          <span aria-hidden="true">/</span>
+                        </h3>
+                        <span class:list={['sh-status', { 'is-active': project.status === 'active' }]}>
+                          <span aria-hidden="true">●</span> {project.statusLabel}
+                        </span>
+                      </header>
+                      <p>{project.description}</p>
+                      <p class="sh-tags">{project.tags.join(' · ')}</p>
+                    </div>
+                  </article>
+                ))
+              }
+            </div>
+          </ShellBlock>
+
+          <ShellBlock id="stack" cmd="cat stack.txt" promptUser={promptUser} label={copy.sections.stack}>
+            <dl class="sh-kv">
+              {
+                stackRows.map((row) => (
+                  <div class="sh-l">
+                    <dt>{row.key}</dt>
+                    <dd>{row.value}</dd>
+                  </div>
+                ))
+              }
+            </dl>
+          </ShellBlock>
+
+          <ShellBlock id="principles" cmd="cat principles.txt" promptUser={promptUser} label={copy.sections.principles}>
+            <dl class="sh-kv">
+              {
+                content.principles.map((row) => (
+                  <div class="sh-l">
+                    <dt>{row.key}</dt>
+                    <dd>{row.value}</dd>
+                  </div>
+                ))
+              }
+            </dl>
+          </ShellBlock>
+
+          <ShellBlock id="experience" cmd="history --work" promptUser={promptUser} label={copy.sections.experience}>
+            <ol class="sh-jobs">
+              {
+                content.experience.map((job) => (
+                  <li class="sh-l">
+                    <span class="sh-when">{job.period}</span>
+                    <div>
+                      <h3>
+                        {job.title} <span class="sh-at">@ {job.company}</span>
+                      </h3>
+                      <p>{job.summary}</p>
+                    </div>
+                  </li>
+                ))
+              }
+            </ol>
+          </ShellBlock>
+
+          <ShellBlock id="writing" cmd="ls writing/" promptUser={promptUser} label={copy.sections.writing}>
+            <p class="sh-total sh-l">total {posts.length}</p>
+            <ul class="sh-posts">
+              {
+                posts.map((post) => (
+                  <li class="sh-l" data-ref={`post:${post.slug}`} data-wrap>
+                    <a href={post.href}>
+                      <span class="sh-perm" aria-hidden="true">
+                        -rw-r--r--
+                      </span>
+                      <span class="sh-yr">{post.year}</span>
+                      <span class="sh-file">{post.slug}</span>
+                      <span class="sh-desc">{post.subtitle}</span>
+                    </a>
+                  </li>
+                ))
+              }
+            </ul>
+          </ShellBlock>
+
+          <ShellBlock id="contact" cmd="contact" promptUser={promptUser} label={copy.sections.contact}>
+            <p class="sh-call sh-l">{content.contact.heading}</p>
+            <ul class="sh-links">
+              {
+                links.map((link, i) => (
+                  <li class="sh-l">
+                    <span class="sh-n" aria-hidden="true">
+                      [{i + 1}]
+                    </span>
+                    <a
+                      class:list={{ 'is-primary': link.primary }}
+                      href={link.href}
+                      target={link.primary ? undefined : '_blank'}
+                      rel={link.primary ? undefined : 'noreferrer noopener'}
+                    >
+                      {link.label}
+                    </a>
+                  </li>
+                ))
+              }
+            </ul>
+          </ShellBlock>
+        </div>
+
+        <div class="sh-log" data-log role="log" aria-live="polite" aria-label={copy.logLabel}></div>
+        <p class="sh-motd sh-js-only"><span aria-hidden="true">#</span> {copy.motd}</p>
+      </div>
+    </main>
+
+    <ShellDock
+      chips={chips}
+      promptUser={promptUser}
+      chipsLabel={copy.chipsLabel}
+      inputLabel={copy.inputLabel}
+      placeholder={copy.placeholder}
+      runLabel={copy.runLabel}
+    />
+
+    <ShellBoot
+      user={user}
+      host={host}
+      name={basics.name}
+      label={basics.label}
+      locale={locale}
+      counts={{
+        projects: content.projects.length,
+        stack: content.stack.length,
+        principles: content.principles.length,
+        roles: content.experience.length,
+        posts: posts.length,
+      }}
+      skip={copy.skip}
+    />
+
+    <div class="sh-crt" aria-hidden="true"><i class="sh-grain"></i><i class="sh-roll"></i></div>
+  </div>
+
+  <script type="application/json" id="sh-data" is:inline set:html={JSON.stringify(context).replace(/</g, '\\u003c')} />
+  <script>
+    import './runtime';
+  </script>
+</BaseLayout>
