@@ -23,6 +23,10 @@ jobs:
           path: node_modules/.cache/typst
           key: typst-${{ runner.os }}
 
+      # resume.{en,es}.json are gitignored; without RESUME_URL_* this copies the sample
+      - name: Resume data
+        run: bun scripts/fetch-resume.ts
+
       - name: Type check
         run: bunx astro check
 
