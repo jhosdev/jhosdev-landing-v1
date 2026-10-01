@@ -1,0 +1,16 @@
+---
+// Lab piece: tic-tac-toe against a minimax that shows its search. Not linked from the site.
+import BaseLayout from '../../../layouts/BaseLayout.astro';
+import TopBar from '../../../components/TopBar.astro';
+import TicTacToe from '../../../components/TicTacToe.astro';
+import { getContent } from '../../../data/content';
+
+const content = getContent('en');
+---
+
+<BaseLayout locale="en" title="lab — tic-tac-toe" description="Tic-tac-toe against a minimax search you can watch think.">
+  <TopBar promptUser={content.promptUser} promptSuffix={content.promptSuffix} locale="en" />
+  <main>
+    <TicTacToe />
+  </main>
+</BaseLayout>

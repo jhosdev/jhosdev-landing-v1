@@ -1,0 +1,1223 @@
+---
+// Tic-tac-toe against a minimax that shows its work. Self-contained panel:
+// the board is real buttons, the canvas only draws the search tree.
+// Debug: ?moves=4,0,8 preloads a position (alternating from whoever starts),
+// ?think=0.6 freezes the search animation at that fraction, plus ?first=cpu,
+// ?level=fallible and ?draws=2 (drawn games already played against perfect).
+const cells = Array.from({ length: 9 }, (_, i) => ({ i, row: Math.floor(i / 3) + 1, col: (i % 3) + 1 }));
+---
+
+<section class="ttt" id="play" data-ttt data-state="you">
+  <p class="prompt">$ ./play --opponent=minimax</p>
+  <div class="ttt-panel">
+    <header class="ttt-head">
+      <p class="ttt-status"><span data-status>your move</span><span class="ttt-caret" aria-hidden="true">▋</span></p>
+      <p class="ttt-score">won <b data-won>0</b><i>·</i>drawn <b data-drawn>0</b><i>·</i>lost <b data-lost>0</b></p>
+    </header>
+
+    <div class="ttt-body">
+      <div class="ttt-board" role="group" aria-label="Tic-tac-toe board. You are X, the computer is O." data-board>
+        {
+          cells.map((c) => (
+            <button type="button" class="ttt-cell" data-cell={c.i} aria-label={`row ${c.row}, column ${c.col}, empty`}>
+              <svg viewBox="0 0 100 100" aria-hidden="true" focusable="false">
+                <path class="ttt-brk" d="M5 19V5H19M81 5H95V19M95 81V95H81M19 95H5V81" />
+                <path class="ttt-ghost ttt-ghost-x" d="M31 29L69 67M69 29L31 67" />
+                <circle class="ttt-ghost ttt-ghost-o" cx="50" cy="48" r="20" />
+                <g class="ttt-glyph ttt-gx">
+                  <path class="ttt-stroke ttt-x1" d="M31 29L69 67" pathLength="1" />
+                  <path class="ttt-stroke ttt-x2" d="M69 29L31 67" pathLength="1" />
+                </g>
+                <g class="ttt-glyph ttt-go">
+                  <circle class="ttt-stroke ttt-o" cx="50" cy="48" r="20" pathLength="1" />
+                </g>
+              </svg>
+              <span class="ttt-eval" data-eval />
+            </button>
+          ))
+        }
+        <svg class="ttt-lines" viewBox="0 0 300 300" aria-hidden="true" focusable="false">
+          <path class="ttt-grid" style="--i:0" d="M100 8V292" pathLength="1"></path>
+          <path class="ttt-grid" style="--i:1" d="M200 292V8" pathLength="1"></path>
+          <path class="ttt-grid" style="--i:2" d="M8 100H292" pathLength="1"></path>
+          <path class="ttt-grid" style="--i:3" d="M292 200H8" pathLength="1"></path>
+          <rect class="ttt-seal" x="1.5" y="1.5" width="297" height="297" rx="6" pathLength="1"></rect>
+          <line class="ttt-strike" data-strike pathLength="1"></line>
+        </svg>
+      </div>
+
+      <div class="ttt-think" aria-hidden="true">
+        <dl class="ttt-readout">
+          <div><dd data-nodes>0</dd><dt>searched</dt></div>
+          <div><dd data-pruned>0</dd><dt>pruned</dt></div>
+          <div><dd data-best>—</dd><dt>evaluation</dt></div>
+        </dl>
+        <div class="ttt-tree">
+          <canvas data-tree></canvas>
+          <p class="ttt-idle" data-idle>search tree idle<span>make a move to wake it</span></p>
+        </div>
+        <p class="ttt-legend">
+          <span class="k-win">cpu wins</span><span class="k-draw">draw</span><span class="k-loss">you win</span><span
+            class="k-cut">pruned</span
+          >
+        </p>
+      </div>
+    </div>
+
+    <ol class="ttt-log" data-log aria-label="Move log" tabindex="0"></ol>
+
+    <footer class="ttt-controls">
+      <div class="ttt-flag" role="radiogroup" aria-label="Who starts">
+        <span aria-hidden="true">--first=</span>
+        <label><input type="radio" name="ttt-first" value="you" checked /><span>you</span></label>
+        <label><input type="radio" name="ttt-first" value="cpu" /><span>cpu</span></label>
+      </div>
+      <div class="ttt-flag" role="radiogroup" aria-label="Opponent level">
+        <span aria-hidden="true">--level=</span>
+        <label><input type="radio" name="ttt-level" value="perfect" checked /><span>perfect</span></label>
+        <label><input type="radio" name="ttt-level" value="fallible" /><span>fallible</span></label>
+      </div>
+      <button type="button" class="ttt-reset" data-reset><span>new game</span></button>
+    </footer>
+
+    <p class="ttt-sr" aria-live="polite" data-live></p>
+  </div>
+  <p class="ttt-note"># alpha-beta minimax, searched live in your browser. x is you, o is the machine.</p>
+</section>
+
+<style>
+  .ttt-panel {
+    background: var(--color-panel);
+    border: 1px solid var(--color-border);
+    border-radius: 6px;
+    font-size: 12px;
+  }
+
+  .ttt-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 8px 16px;
+    flex-wrap: wrap;
+    padding: 12px 20px;
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  .ttt-status {
+    color: var(--color-text);
+  }
+
+  .ttt-caret {
+    margin-left: 6px;
+    color: var(--color-green);
+    animation: caret-blink 1s step-end infinite;
+  }
+
+  .ttt[data-state='cpu'] .ttt-caret {
+    color: var(--color-cyan);
+    animation-duration: 0.24s;
+  }
+
+  .ttt[data-state='over'] .ttt-caret {
+    visibility: hidden;
+  }
+
+  .ttt-score {
+    color: var(--color-muted);
+    white-space: nowrap;
+  }
+
+  .ttt-score b {
+    font-weight: 400;
+    color: var(--color-body-strong);
+  }
+
+  .ttt-score i {
+    font-style: normal;
+    color: var(--color-faint);
+    margin: 0 8px;
+  }
+
+  .ttt-body {
+    display: grid;
+    grid-template-columns: 300px minmax(0, 1fr);
+    gap: 28px;
+    padding: 20px;
+    align-items: center;
+  }
+
+  /* Board: real buttons; the svg on top only draws the grid and the result. */
+  .ttt-board {
+    position: relative;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    aspect-ratio: 1;
+    width: 100%;
+    max-width: 340px;
+    margin: 0 auto;
+  }
+
+  .ttt-cell {
+    position: relative;
+    appearance: none;
+    background: none;
+    border: 0;
+    padding: 0;
+    min-width: 44px;
+    min-height: 44px;
+    border-radius: 6px;
+    cursor: default;
+    transition: background-color 0.2s;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .ttt-cell:focus-visible {
+    outline: 2px solid var(--color-green);
+    outline-offset: -5px;
+  }
+
+  .ttt[data-state='you'] .ttt-cell:not([data-mark]) {
+    cursor: pointer;
+  }
+
+  .ttt[data-state='you'] .ttt-cell:not([data-mark]):hover {
+    background: rgba(46, 57, 71, 0.22);
+  }
+
+  .ttt-cell svg {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    overflow: visible;
+  }
+
+  .ttt-cell path,
+  .ttt-cell circle,
+  .ttt-lines * {
+    fill: none;
+  }
+
+  /* Targeting brackets: driven per frame from the search animation. */
+  .ttt-brk {
+    stroke: var(--color-cyan);
+    stroke-width: 1.5;
+    opacity: var(--bo, 0);
+    transform: scale(var(--bs, 1));
+    transform-origin: 50px 50px;
+  }
+
+  .ttt-ghost {
+    stroke-width: 2;
+    opacity: 0;
+  }
+
+  .ttt-ghost-x {
+    stroke: var(--color-text);
+    transition: opacity 0.15s;
+  }
+
+  .ttt-ghost-o {
+    stroke: var(--color-cyan);
+    stroke-dasharray: 3 5;
+    opacity: var(--go, 0);
+  }
+
+  .ttt-cell[data-mark] .ttt-ghost-o {
+    opacity: 0;
+  }
+
+  .ttt[data-state='you'] .ttt-cell:not([data-mark]):is(:hover, :focus-visible) .ttt-ghost-x {
+    opacity: 0.22;
+  }
+
+  .ttt-glyph {
+    display: none;
+    transform-origin: 50px 48px;
+  }
+
+  .ttt-cell[data-mark='x'] .ttt-gx,
+  .ttt-cell[data-mark='o'] .ttt-go {
+    display: inline;
+    animation: ttt-settle 0.55s cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+
+  /* Dash gap is longer than the path so round caps leave no dot before the draw starts. */
+  .ttt-stroke {
+    stroke-width: 3.2;
+    stroke-linecap: round;
+    stroke-dasharray: 1.05 1.2;
+    stroke-dashoffset: 1.1;
+    animation: ttt-draw 0.2s cubic-bezier(0.65, 0, 0.35, 1) forwards;
+  }
+
+  .ttt-gx .ttt-stroke {
+    stroke: var(--color-text);
+  }
+
+  .ttt-x2 {
+    animation-delay: 0.13s;
+  }
+
+  .ttt-o {
+    stroke: var(--color-cyan);
+    transform: rotate(-90deg);
+    transform-origin: 50px 48px;
+    animation-duration: 0.42s;
+  }
+
+  .ttt-eval {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 10%;
+    text-align: center;
+    font-size: 10.5px;
+    line-height: 1.2;
+    white-space: nowrap;
+    color: var(--color-body);
+    opacity: var(--lo, 1);
+    transform: scale(var(--ls, 1));
+    pointer-events: none;
+  }
+
+  .ttt-eval[data-tone='scan'] {
+    color: var(--color-cyan);
+  }
+
+  .ttt-eval[data-tone='win'] {
+    color: var(--color-green);
+  }
+
+  .ttt-eval[data-tone='loss'] {
+    color: var(--color-body-strong);
+  }
+
+  .ttt-lines {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    overflow: visible;
+  }
+
+  .ttt-grid {
+    stroke: var(--color-border-hover);
+    stroke-width: 1.5;
+    stroke-dasharray: 1.05 1.2;
+    stroke-dashoffset: 1.1;
+    animation: ttt-draw 0.7s cubic-bezier(0.22, 1, 0.36, 1) calc(0.15s + var(--i) * 0.09s) forwards;
+  }
+
+  .ttt-seal,
+  .ttt-strike {
+    stroke-dasharray: 1.05 1.2;
+    stroke-dashoffset: 1.1;
+  }
+
+  .ttt-strike {
+    stroke-width: 3;
+    stroke-linecap: round;
+  }
+
+  /* Result: the winner's line strikes through and the rest of the board recedes. */
+  .ttt-board[data-over] .ttt-cell:not([data-win]) .ttt-glyph {
+    opacity: 0.3;
+    transition: opacity 0.45s ease calc(0.3s + var(--d, 0s));
+  }
+
+  .ttt-board[data-over='you'] .ttt-strike,
+  .ttt-board[data-over='cpu'] .ttt-strike {
+    animation: ttt-draw 0.5s cubic-bezier(0.7, 0, 0.2, 1) 0.32s forwards;
+  }
+
+  .ttt-board[data-over='you'] .ttt-strike {
+    stroke: var(--color-text);
+  }
+
+  .ttt-board[data-over='cpu'] .ttt-strike {
+    stroke: var(--color-cyan);
+  }
+
+  .ttt-cell[data-win] .ttt-glyph {
+    animation: ttt-pop 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) calc(0.4s + var(--d, 0s)) both;
+  }
+
+  /* Draw: nobody gets a line. The open grid closes into a sealed box instead. */
+  .ttt-board[data-over='draw'] .ttt-seal {
+    stroke: var(--color-muted);
+    stroke-width: 1.5;
+    animation: ttt-draw 0.9s cubic-bezier(0.65, 0, 0.35, 1) 0.35s forwards;
+  }
+
+  .ttt-board[data-over='draw'] .ttt-grid {
+    stroke: var(--color-muted);
+    transition: stroke 0.6s ease 0.5s;
+  }
+
+  @keyframes ttt-draw {
+    to {
+      stroke-dashoffset: 0;
+    }
+  }
+
+  @keyframes ttt-settle {
+    from {
+      transform: scale(0.78);
+    }
+  }
+
+  @keyframes ttt-pop {
+    0% {
+      transform: scale(1);
+    }
+    35% {
+      transform: scale(0.86);
+    }
+    100% {
+      transform: scale(1.08);
+    }
+  }
+
+  /* Thinking column */
+  .ttt-think {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    min-width: 0;
+  }
+
+  .ttt-readout {
+    display: grid;
+    /* Counters keep a fixed 7ch so the row does not shuffle while they run. */
+    grid-template-columns: auto auto minmax(0, 1fr);
+    gap: 20px;
+  }
+
+  .ttt-readout dd {
+    min-width: 7ch;
+    font-size: 17px;
+    line-height: 1.3;
+    color: var(--color-text);
+    white-space: nowrap;
+  }
+
+  .ttt-readout dd[data-tone='win'] {
+    color: var(--color-green);
+  }
+
+  .ttt-readout dt {
+    font-size: 10.5px;
+    color: var(--color-muted);
+    white-space: nowrap;
+  }
+
+  .ttt-tree {
+    position: relative;
+    background: var(--color-bg);
+    border: 1px solid var(--color-border);
+    border-radius: 6px;
+    overflow: hidden;
+  }
+
+  .ttt-tree canvas {
+    width: 100%;
+    aspect-ratio: 340 / 200;
+  }
+
+  .ttt-idle {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    padding-left: 24px;
+    color: var(--color-muted);
+    font-size: 11.5px;
+  }
+
+  .ttt-idle span {
+    color: var(--color-faint);
+    font-size: 10.5px;
+  }
+
+  .ttt-idle[hidden] {
+    display: none;
+  }
+
+  .ttt-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px 14px;
+    font-size: 10.5px;
+    color: var(--color-muted);
+  }
+
+  .ttt-legend span::before {
+    content: '';
+    display: inline-block;
+    width: 7px;
+    height: 7px;
+    margin-right: 6px;
+    background: currentColor;
+  }
+
+  .ttt-legend .k-win::before {
+    background: var(--color-green);
+  }
+
+  .ttt-legend .k-loss::before {
+    background: var(--color-body-strong);
+  }
+
+  .ttt-legend .k-cut::before {
+    height: 1px;
+    vertical-align: middle;
+    background: repeating-linear-gradient(90deg, var(--color-muted) 0 2px, transparent 2px 4px);
+  }
+
+  /* Log */
+  .ttt-log {
+    /* Six whole lines plus one padding, so a scrolled log never shows half a line. */
+    height: 126px;
+    overflow-y: auto;
+    padding: 12px 20px;
+    border-top: 1px solid var(--color-border);
+    font-size: 11.5px;
+    line-height: 19px;
+    color: var(--color-body);
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-border-hover) transparent;
+  }
+
+  .ttt-log:focus-visible {
+    outline: 2px solid var(--color-green);
+    outline-offset: -2px;
+  }
+
+  .ttt-log :global(li) {
+    white-space: pre-wrap;
+  }
+
+  .ttt-log :global(.note) {
+    color: var(--color-muted);
+  }
+
+  .ttt-log :global(.you) {
+    color: var(--color-body-strong);
+  }
+
+  .ttt-log :global(.res) {
+    color: var(--color-text);
+  }
+
+  .ttt-log :global(.res.you) {
+    color: var(--color-green);
+  }
+
+  .ttt-log :global(.nod) {
+    color: var(--color-text);
+    letter-spacing: 0.04em;
+  }
+
+  /* Controls: the flags of the prompt line, as native radios */
+  .ttt-controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0 28px;
+    padding: 4px 20px;
+    border-top: 1px solid var(--color-border);
+    color: var(--color-muted);
+  }
+
+  .ttt-flag {
+    display: flex;
+    align-items: center;
+  }
+
+  .ttt-flag > span {
+    margin-right: 6px;
+  }
+
+  .ttt-flag label,
+  .ttt-reset {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 44px;
+    min-height: 44px;
+    padding: 0 3px;
+    cursor: pointer;
+  }
+
+  .ttt-flag input {
+    position: absolute;
+    opacity: 0;
+    width: 1px;
+    height: 1px;
+  }
+
+  .ttt-flag label span,
+  .ttt-reset span {
+    padding: 3px 10px;
+    border: 1px solid var(--color-border);
+    border-radius: 6px;
+    color: var(--color-nav);
+    transition:
+      border-color 0.2s,
+      color 0.2s;
+  }
+
+  .ttt-flag label:hover span,
+  .ttt-reset:hover span {
+    border-color: var(--color-border-hover);
+    color: var(--color-body-strong);
+  }
+
+  .ttt-flag input:checked + span {
+    color: var(--color-green);
+    border-color: rgba(87, 217, 163, 0.45);
+  }
+
+  /* Game over: the one control that matters lights up. */
+  .ttt[data-state='over'] .ttt-reset span {
+    color: var(--color-green);
+    border-color: rgba(87, 217, 163, 0.45);
+  }
+
+  .ttt-flag input:focus-visible + span,
+  .ttt-reset:focus-visible span {
+    outline: 2px solid var(--color-green);
+    outline-offset: 2px;
+  }
+
+  .ttt-reset {
+    appearance: none;
+    background: none;
+    border: 0;
+    margin-left: auto;
+    outline: none;
+  }
+
+  .ttt-note {
+    margin-top: 12px;
+    font-size: 11.5px;
+    color: var(--color-faint);
+  }
+
+  .ttt-sr {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  @media (max-width: 720px) {
+    .ttt-head,
+    .ttt-log {
+      padding-left: 16px;
+      padding-right: 16px;
+    }
+
+    .ttt-body {
+      grid-template-columns: minmax(0, 1fr);
+      gap: 18px;
+      padding: 16px;
+    }
+
+    .ttt-controls {
+      padding: 4px 16px;
+      gap: 0 20px;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .ttt-caret {
+      animation: none;
+    }
+
+    .ttt :is(.ttt-glyph, .ttt-stroke, .ttt-grid, .ttt-seal, .ttt-strike) {
+      animation-duration: 0.01s !important;
+      animation-delay: 0s !important;
+      transition: none !important;
+    }
+  }
+</style>
+
+<script>
+  import { choose, emptyBoard, outcome, search, winner, type Cell, type Level, type SearchNode } from '../lib/tictactoe';
+
+  type RGB = [number, number, number];
+
+  // Palette = the DESIGN.md tokens, nothing new.
+  const FAINT: RGB = [61, 71, 84];
+  const MUTED: RGB = [93, 106, 121];
+  const STRONG: RGB = [199, 209, 220];
+  const TEXT: RGB = [240, 244, 248];
+  const GREEN: RGB = [87, 217, 163];
+  const CYAN: RGB = [110, 224, 255];
+
+  // Logical canvas stage; scaled to the CSS width like BootScene.
+  const W = 340;
+  const H = 200;
+  const GUTTER = 34;
+  const ROW = [14, 46, 84, 92];
+  const FLOOR = H - 10;
+  /** Share of the animation spent sweeping candidates; the rest is the decision. */
+  const SWEEP = 0.8;
+
+  const clamp = (x: number) => (x < 0 ? 0 : x > 1 ? 1 : x);
+  const outCubic = (k: number) => 1 - Math.pow(1 - k, 3);
+  const outBack = (k: number) => 1 + 2.70158 * Math.pow(k - 1, 3) + 1.70158 * Math.pow(k - 1, 2);
+  // Pulls back before it goes and overshoots before it lands.
+  const inOutBack = (k: number) => {
+    const c = 2.5949;
+    return k < 0.5
+      ? (Math.pow(2 * k, 2) * ((c + 1) * 2 * k - c)) / 2
+      : (Math.pow(2 * k - 2, 2) * ((c + 1) * (2 * k - 2) + c) + 2) / 2;
+  };
+  const rgba = (c: RGB, a: number) => `rgba(${c[0]},${c[1]},${c[2]},${a})`;
+  const mix = (a: RGB, b: RGB, k: number): RGB => [a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k, a[2] + (b[2] - a[2]) * k];
+  const num = (n: number) => n.toLocaleString('en-US');
+  const coord = (i: number) => `r${Math.floor(i / 3) + 1}c${(i % 3) + 1}`;
+  const spoken = (i: number) => `row ${Math.floor(i / 3) + 1}, column ${(i % 3) + 1}`;
+
+  /** A root value as the cpu would say it: the outcome, and how many of the winner's moves away it is. */
+  function verdict(value: number) {
+    const tone = outcome(value);
+    if (tone === 'draw') return { tone, text: '= draw' };
+    const moves = Math.ceil((10 - Math.abs(value)) / 2);
+    return { tone, text: `${tone === 'win' ? '+ win' : '− loss'} in ${moves}` };
+  }
+
+  /** One drawable node of the traced search tree. Times are in "candidate units": candidate i is searched during [i, i+1]. */
+  interface TreeNode {
+    x: number;
+    y: number;
+    px: number;
+    py: number;
+    a: number;
+    b: number;
+    level: number;
+    move: number;
+    tone: RGB;
+    cut: boolean;
+    bar: number;
+    pitch: number;
+    pv: boolean;
+  }
+
+  interface Think {
+    evals: SearchNode[];
+    pick: SearchNode;
+    tree: TreeNode[];
+    board: Cell[];
+  }
+
+  function buildTree(evals: SearchNode[], pick: SearchNode): TreeNode[] {
+    const out: TreeNode[] = [];
+    const deepest = Math.max(1, ...evals.flatMap((e) => e.kids.flatMap((k) => k.kids.map((g) => g.nodes))));
+    const slot = (W - GUTTER - 8) / evals.length;
+    // Plies 1 and 2 fan out sideways. Ply 3 hangs under its parent as a tape:
+    // one segment per cpu answer, searched top to bottom, pruned ones as a dotted tail.
+    const place = (n: SearchNode, level: number, x0: number, x1: number, y: number, a: number, b: number, px: number, py: number, pv: boolean) => {
+      const x = (x0 + x1) / 2;
+      // Values alternate point of view each ply; colour is always from the cpu's side.
+      const value = level % 2 ? n.value : -n.value;
+      const bar = level < 3 ? 0 : n.cut ? 1 : 2.5 + 11 * Math.sqrt(n.nodes / deepest);
+      const tone = n.cut ? FAINT : value > 0 ? GREEN : value < 0 ? STRONG : MUTED;
+      out.push({ x, y, px, py, a, b, level, move: n.move, tone, cut: n.cut, bar, pitch: x1 - x0, pv });
+      const live = n.kids.filter((k) => !k.cut);
+      const best = pv ? live.reduce<SearchNode | undefined>((m, k) => (!m || k.value > m.value ? k : m), undefined) : undefined;
+      const lead = a + (b - a) * 0.14;
+      const w = (x1 - x0) / Math.max(1, n.kids.length);
+      let j = 0;
+      let drop = ROW[3];
+      n.kids.forEach((k, i) => {
+        // Pruned siblings take no search time: they are dismissed the moment the cutoff lands.
+        const ka = k.cut ? b : lead + ((b - lead) * j) / live.length;
+        const kb = k.cut ? b : lead + ((b - lead) * (j + 1)) / live.length;
+        if (!k.cut) j++;
+        if (level < 2) place(k, level + 1, x0 + i * w, x0 + (i + 1) * w, ROW[level + 1], ka, kb, x, y, k === best);
+        else drop = place(k, 3, x0, x1, drop, ka, kb, x, y, k === best) + (k.cut ? 1.5 : 1);
+      });
+      return y + bar;
+    };
+    const rootX = GUTTER + (W - GUTTER - 8) / 2;
+    evals.forEach((e, i) => place(e, 1, GUTTER + i * slot + 3, GUTTER + (i + 1) * slot - 3, ROW[1], i, i + 1, rootX, ROW[0], e === pick));
+    // Fit the tapes to the stage: the longest one lands on the floor, short ones may stretch.
+    const tapes = out.filter((t) => t.level === 3);
+    const squeeze = Math.min(1.7, (FLOOR - ROW[3]) / Math.max(1, ...tapes.map((t) => t.y + t.bar - ROW[3])));
+    for (const t of tapes) {
+      t.y = ROW[3] + (t.y - ROW[3]) * squeeze;
+      t.bar *= squeeze;
+    }
+    return out;
+  }
+
+  function init(root: HTMLElement) {
+    const $ = <T extends Element>(sel: string) => root.querySelector<T>(sel)!;
+    const boardEl = $<HTMLElement>('[data-board]');
+    const buttons = [...root.querySelectorAll<HTMLButtonElement>('[data-cell]')];
+    const labels = buttons.map((b) => b.querySelector<HTMLElement>('[data-eval]')!);
+    const strike = $<SVGLineElement>('[data-strike]');
+    const statusEl = $<HTMLElement>('[data-status]');
+    const live = $<HTMLElement>('[data-live]');
+    const logEl = $<HTMLElement>('[data-log]');
+    const idle = $<HTMLElement>('[data-idle]');
+    const outNodes = $<HTMLElement>('[data-nodes]');
+    const outPruned = $<HTMLElement>('[data-pruned]');
+    const outBest = $<HTMLElement>('[data-best]');
+    const cv = $<HTMLCanvasElement>('[data-tree]');
+    const ctx = cv.getContext('2d');
+    const radio = (name: string) => root.querySelector<HTMLInputElement>(`input[name="${name}"]:checked`)!.value;
+
+    const params = new URLSearchParams(location.search);
+    const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const frozen = params.has('think') ? clamp(Number(params.get('think')) || 0) : null;
+
+    let board = emptyBoard();
+    let state: 'you' | 'cpu' | 'over' = 'you';
+    let ply = 0;
+    let game = 0;
+    let perfectDraws = Number(params.get('draws')) || 0;
+    const score = { won: 0, drawn: 0, lost: 0 };
+    let think: Think | null = null;
+    let shown = 1;
+    /** Bumped on every new game so a stale animation or typewriter stops itself. */
+    let epoch = 0;
+
+    // ---- log and status -------------------------------------------------
+    function log(cls: string, text: string) {
+      const li = document.createElement('li');
+      li.className = cls;
+      li.textContent = text;
+      logEl.append(li);
+      while (logEl.children.length > 80) logEl.firstElementChild?.remove();
+      logEl.scrollTop = logEl.scrollHeight;
+      return li;
+    }
+
+    function typeOut(lines: string[], mine: number) {
+      const [text, ...rest] = lines;
+      if (text === undefined || mine !== epoch) return;
+      const li = log('nod', '');
+      if (still) {
+        li.textContent = text;
+        typeOut(rest, mine);
+        return;
+      }
+      let i = 0;
+      const id = setInterval(() => {
+        li.textContent = text.slice(0, ++i);
+        logEl.scrollTop = logEl.scrollHeight;
+        if (i < text.length) return;
+        clearInterval(id);
+        setTimeout(() => typeOut(rest, mine), 420);
+      }, 34);
+    }
+
+    function setState(next: typeof state, text: string) {
+      state = next;
+      root.dataset.state = next;
+      statusEl.textContent = text;
+    }
+
+    // ---- board ----------------------------------------------------------
+    function place(i: number, who: 'X' | 'O') {
+      board[i] = who;
+      ply++;
+      buttons[i].dataset.mark = who.toLowerCase();
+      buttons[i].setAttribute('aria-disabled', 'true');
+      buttons[i].setAttribute('aria-label', `${spoken(i)}, ${who === 'X' ? 'X, yours' : 'O, computer'}`);
+    }
+
+    function clearEvals() {
+      buttons.forEach((b, i) => {
+        b.removeAttribute('style');
+        labels[i].textContent = '';
+        labels[i].removeAttribute('data-tone');
+      });
+    }
+
+    function label(i: number, text: string, tone: string) {
+      if (labels[i].textContent !== text) labels[i].textContent = text;
+      labels[i].dataset.tone = tone;
+    }
+
+    /** Returns true when the game ended on this move. */
+    function settle(last: number): boolean {
+      const won = winner(board);
+      if (!won && ply < 9) return false;
+      const result = won ? (won.player === 'X' ? 'you' : 'cpu') : 'draw';
+      // Stagger the aftermath outward from the last move.
+      buttons.forEach((b, i) => {
+        const d = Math.hypot((i % 3) - (last % 3), Math.floor(i / 3) - Math.floor(last / 3));
+        b.style.setProperty('--d', `${(d * 0.09).toFixed(2)}s`);
+      });
+      if (won) {
+        const [from, , to] = won.line;
+        const at = (i: number) => [(i % 3) * 100 + 50, Math.floor(i / 3) * 100 + 50];
+        const [x1, y1] = at(from);
+        const [x2, y2] = at(to);
+        const len = Math.hypot(x2 - x1, y2 - y1);
+        const ux = ((x2 - x1) / len) * 34;
+        const uy = ((y2 - y1) / len) * 34;
+        // The marks sit 2% above centre to leave room for the score line.
+        for (const [k, v] of [['x1', x1 - ux], ['y1', y1 - uy - 2], ['x2', x2 + ux], ['y2', y2 + uy - 2]] as const) {
+          strike.setAttribute(k, v.toFixed(1));
+        }
+        won.line.forEach((i) => (buttons[i].dataset.win = ''));
+      }
+      boardEl.dataset.over = result;
+      const text = { you: 'you win', cpu: 'cpu wins', draw: 'draw' }[result];
+      score[result === 'you' ? 'won' : result === 'cpu' ? 'lost' : 'drawn']++;
+      for (const key of ['won', 'drawn', 'lost'] as const) $(`[data-${key}]`).textContent = String(score[key]);
+      setState('over', text);
+      log(`res ${result}`, { you: '+ you win. the machine slipped.', cpu: '− cpu wins.', draw: '= draw. nobody blinks.' }[result]);
+      let said = { you: 'You win.', cpu: 'The computer wins.', draw: 'Draw.' }[result];
+      if (result === 'draw' && radio('ttt-level') === 'perfect' && ++perfectDraws === 3) {
+        // The WarGames lesson, once per session.
+        const mine = epoch;
+        const lines = ['> A STRANGE GAME.', '> THE ONLY WINNING MOVE IS NOT TO PLAY.'];
+        setTimeout(() => typeOut(lines, mine), still ? 0 : 1100);
+        said += ' A strange game. The only winning move is not to play.';
+      }
+      live.textContent = `${said} Score: ${score.won} won, ${score.drawn} drawn, ${score.lost} lost.`;
+      return true;
+    }
+
+    // ---- search visualisation ------------------------------------------
+    let scale = 1;
+
+    function miniBoard(x: number, y: number, move: number, tone: RGB, alpha: number, lit: number) {
+      for (let i = 0; i < 9; i++) {
+        const cx = x + ((i % 3) - 1) * 5;
+        const cy = y + (Math.floor(i / 3) - 1) * 5;
+        const here = i === move;
+        const size = here ? 2.5 + lit : 2.5;
+        ctx!.fillStyle = here ? rgba(tone, alpha) : rgba(think?.board[i] ? MUTED : FAINT, alpha * (think?.board[i] ? 1 : 0.7));
+        ctx!.fillRect(cx - size / 2, cy - size / 2, size, size);
+      }
+    }
+
+    /** Where the edge into a ply-1 or ply-2 node starts and ends. */
+    const edge = (node: TreeNode) => [node.py + (node.level === 1 ? 4 : 11), node.y - (node.level === 1 ? 11 : 3)];
+    const tapeWidth = (node: TreeNode) => Math.min(7, Math.max(1.2, node.pitch * 0.62));
+
+    function drawTree(p: number) {
+      if (!ctx) return;
+      ctx.setTransform(scale, 0, 0, scale, 0, 0);
+      ctx.clearRect(0, 0, W, H);
+      ctx.font = '9px "IBM Plex Mono", ui-monospace, monospace';
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle = rgba(FAINT, 1);
+      ['root', 'cpu', 'you', 'cpu'].forEach((who, i) => ctx.fillText(who, 8, ROW[i] + (i === 3 ? 12.5 : 0.5)));
+      if (!think) return;
+
+      const n = think.evals.length;
+      // Unclamped: the last candidate still needs time after the sweep to settle.
+      const s = (p / SWEEP) * n;
+      const d = clamp((p - SWEEP) / (1 - SWEEP));
+      const recede = 1 - 0.5 * outCubic(d);
+      const rootX = GUTTER + (W - GUTTER - 8) / 2;
+      let head: TreeNode | null = null;
+
+      for (const node of think.tree) {
+        const alpha = node.pv ? 1 : recede;
+        const started = p > 0 && s >= node.a;
+        if (node.level === 1 && !started) miniBoard(node.x, node.y, node.move, MUTED, 0.8, 0);
+        if (!started) continue;
+
+        const span = node.b - node.a;
+        const active = s < node.b;
+        if (active && (!head || node.level >= head.level)) head = node;
+        // Under search it is cyan; the verdict flashes white, then settles into its colour.
+        const colour = active ? CYAN : mix(TEXT, node.tone, clamp((s - node.b) / 0.35));
+
+        if (node.level === 3) {
+          const w = tapeWidth(node);
+          if (node.cut) {
+            ctx.fillStyle = rgba(MUTED, alpha * 0.7);
+            ctx.fillRect(node.x - w / 2, node.y, w, 1);
+          } else {
+            ctx.fillStyle = rgba(colour, alpha * (active ? 1 : 0.9));
+            ctx.fillRect(node.x - w / 2, node.y, w, node.bar * outCubic(clamp((s - node.a) / Math.max(0.1, span))));
+          }
+          continue;
+        }
+
+        const [y0, y1] = edge(node);
+        const grow = outCubic(clamp((s - node.a) / Math.max(0.12, span * 0.35)));
+        ctx.strokeStyle = rgba(colour, alpha * (node.level === 1 ? 0.8 : 0.55));
+        ctx.lineWidth = active ? 1.2 : 0.8;
+        ctx.beginPath();
+        ctx.moveTo(node.px, y0);
+        ctx.lineTo(node.px + (node.x - node.px) * grow, y0 + (y1 - y0) * grow);
+        ctx.stroke();
+
+        if (node.level === 1) {
+          miniBoard(node.x, node.y, node.move, colour, alpha, 2 * outBack(clamp((s - node.a) / 0.3)));
+        } else {
+          const w = tapeWidth(node);
+          ctx.fillStyle = rgba(colour, alpha);
+          ctx.fillRect(node.x - w / 2, node.y - 1, w, 2);
+        }
+      }
+
+      // Root, and the scan line riding the depth-first frontier.
+      ctx.fillStyle = rgba(d > 0 || head ? CYAN : STRONG, 1);
+      ctx.fillRect(rootX - 2.5, ROW[0] - 2.5, 5, 5);
+      if (head && p < SWEEP) {
+        ctx.fillStyle = rgba(CYAN, 0.2);
+        ctx.fillRect(head.x - 0.5, ROW[1] + 12, 1, H - ROW[1] - 18);
+        ctx.fillStyle = rgba(CYAN, 0.9);
+        ctx.fillRect(head.x - 3, H - 5, 6, 1.5);
+      }
+
+      // Decision: the principal variation lights up from the root down.
+      if (d > 0) {
+        const line = think.tree.filter((t) => t.pv);
+        line.forEach((node, k) => {
+          const e = outCubic(clamp(d * (line.length + 0.6) - k));
+          if (e <= 0) return;
+          ctx.strokeStyle = ctx.fillStyle = rgba(CYAN, 1);
+          if (node.level === 3) {
+            const w = tapeWidth(node);
+            ctx.fillRect(node.x - w / 2, node.y, w, node.bar * e);
+            return;
+          }
+          const [y0, y1] = edge(node);
+          ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          ctx.moveTo(node.px, y0);
+          ctx.lineTo(node.px + (node.x - node.px) * e, y0 + (y1 - y0) * e);
+          ctx.stroke();
+          if (node.level === 1) {
+            // The same brackets the board uses lock onto the chosen candidate.
+            const r = 10.5 + 5 * (1 - inOutBack(d));
+            const t = 3.5;
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            for (const [sx, sy] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
+              ctx.moveTo(node.x + sx * r, node.y + sy * (r - t));
+              ctx.lineTo(node.x + sx * r, node.y + sy * r);
+              ctx.lineTo(node.x + sx * (r - t), node.y + sy * r);
+            }
+            ctx.stroke();
+          } else if (e >= 1) {
+            const w = tapeWidth(node);
+            ctx.fillRect(node.x - w / 2, node.y - 1, w, 2);
+          }
+        });
+      }
+    }
+
+    /** The whole thinking display as a pure function of progress 0..1, so it can be frozen or skipped. */
+    function renderThink(p: number) {
+      shown = p;
+      if (!think) return drawTree(p);
+      const { evals, pick } = think;
+      const s = (p / SWEEP) * evals.length;
+      const d = clamp((p - SWEEP) / (1 - SWEEP));
+      let nodes = 0;
+      let pruned = 0;
+      let best = -Infinity;
+
+      evals.forEach((e, i) => {
+        const q = s - i;
+        const style = buttons[e.move].style;
+        nodes += Math.round(e.nodes * clamp(q));
+        pruned += Math.round(e.pruned * clamp(q));
+        const chosen = e === pick;
+        let bo = 0;
+        let bs = 1;
+        let go = 0;
+        let lo = 1;
+        let ls = 1;
+        if (q < 0 || p === 0) {
+          label(e.move, '', 'scan');
+        } else if (q < 1) {
+          // Under evaluation: brackets snap on with overshoot, the count runs.
+          bo = clamp(q / 0.12);
+          bs = 1 + 0.34 * (1 - outBack(clamp(q / 0.5)));
+          go = 0.5 * bo;
+          label(e.move, num(Math.round(e.nodes * q)), 'scan');
+        } else {
+          best = Math.max(best, e.value);
+          const v = verdict(e.value);
+          label(e.move, v.text, v.tone);
+          // Small enough that an 11-character verdict stays inside a 100px cell.
+          ls = 1 + 0.16 * (1 - outBack(clamp((q - 1) / 0.45)));
+          bo = 0.55 * (1 - clamp((q - 1) / 0.6));
+          if (d > 0 && chosen) {
+            // Lock on: back off first, then clamp down past the mark and settle.
+            bo = clamp(d / 0.25);
+            bs = 1 + 0.26 * (1 - inOutBack(d));
+            go = 0.55 * clamp(d / 0.4);
+          } else if (d > 0) {
+            bo = 0;
+            lo = 1 - 0.55 * outCubic(d);
+          }
+        }
+        style.setProperty('--bo', bo.toFixed(3));
+        style.setProperty('--bs', bs.toFixed(3));
+        style.setProperty('--go', go.toFixed(3));
+        style.setProperty('--lo', lo.toFixed(3));
+        style.setProperty('--ls', ls.toFixed(3));
+      });
+
+      outNodes.textContent = num(nodes);
+      outPruned.textContent = num(pruned);
+      const said = d > 0 ? verdict(pick.value) : best > -Infinity ? verdict(best) : null;
+      outBest.textContent = said ? said.text : '···';
+      outBest.dataset.tone = said ? said.tone : '';
+      drawTree(p);
+    }
+
+    // rAF only runs while a search is on screen; nothing loops when idle.
+    let visible = true;
+    let raf = 0;
+    let run: { ms: number; elapsed: number; last: number; done: () => void } | null = null;
+    const tick = (now: number) => {
+      raf = 0;
+      if (!run) return;
+      // Clamp the step so a background tab resumes instead of jumping to the end.
+      run.elapsed += Math.min(50, now - run.last);
+      run.last = now;
+      const p = Math.min(1, run.elapsed / run.ms);
+      renderThink(p);
+      if (p >= 1) {
+        const { done } = run;
+        run = null;
+        done();
+      } else if (visible) {
+        raf = requestAnimationFrame(tick);
+      }
+    };
+    new IntersectionObserver(([entry]) => {
+      visible = entry.isIntersecting;
+      if (visible && run && !raf) {
+        run.last = performance.now();
+        raf = requestAnimationFrame(tick);
+      }
+    }).observe(root);
+
+    function fit() {
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      cv.width = Math.round(cv.clientWidth * dpr);
+      cv.height = Math.round((cv.clientWidth * dpr * H) / W);
+      scale = cv.width / W;
+      drawTree(shown);
+    }
+    new ResizeObserver(fit).observe(cv);
+    document.fonts.load('9px "IBM Plex Mono"').then(() => drawTree(shown), () => undefined);
+
+    // ---- turns ----------------------------------------------------------
+    function cpuTurn() {
+      const evals = search(board, 'O', 3);
+      const level = radio('ttt-level') as Level;
+      const pick = choose(evals, level);
+      think = { evals, pick, tree: buildTree(evals, pick), board: [...board] };
+      idle.hidden = true;
+      clearEvals();
+      // Kept short: the status shares one line with the score at 390px.
+      setState('cpu', 'searching');
+
+      const mine = epoch;
+      const commit = () => {
+        if (mine !== epoch) return;
+        place(pick.move, 'O');
+        const v = verdict(pick.value);
+        const total = evals.reduce((sum, e) => sum + e.nodes, 0);
+        const slip = outcome(pick.value) !== outcome(Math.max(...evals.map((e) => e.value)));
+        log('cpu', `${String(ply).padStart(2, '0')} cpu ${coord(pick.move)}  ${v.text.padEnd(11)} ${num(total)} nodes${slip ? '  (slip)' : ''}`);
+        if (settle(pick.move)) return;
+        setState('you', 'your move');
+        live.textContent = `Computer played ${spoken(pick.move)}. Your move.`;
+      };
+
+      if (frozen !== null) return renderThink(frozen);
+      if (still) {
+        renderThink(1);
+        return commit();
+      }
+      renderThink(0);
+      run = { ms: 400 + 105 * evals.length, elapsed: 0, last: performance.now(), done: commit };
+      if (visible && !raf) raf = requestAnimationFrame(tick);
+    }
+
+    function humanMove(i: number) {
+      if (state !== 'you' || board[i]) return;
+      clearEvals();
+      place(i, 'X');
+      log('you', `${String(ply).padStart(2, '0')} you ${coord(i)}`);
+      if (!settle(i)) cpuTurn();
+    }
+
+    function newGame(auto = true) {
+      epoch++;
+      run = null;
+      board = emptyBoard();
+      ply = 0;
+      game++;
+      delete boardEl.dataset.over;
+      clearEvals();
+      buttons.forEach((b, i) => {
+        delete b.dataset.mark;
+        delete b.dataset.win;
+        b.removeAttribute('aria-disabled');
+        b.setAttribute('aria-label', `${spoken(i)}, empty`);
+      });
+      const first = radio('ttt-first');
+      log('note', `# game ${game} · ${first} first · opponent ${radio('ttt-level')}`);
+      setState('you', 'your move');
+      if (auto && first === 'cpu') cpuTurn();
+    }
+
+    // ---- input ----------------------------------------------------------
+    buttons.forEach((b, i) => b.addEventListener('click', () => humanMove(i)));
+    boardEl.addEventListener('keydown', (event) => {
+      const i = buttons.indexOf(event.target as HTMLButtonElement);
+      const step = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[event.key];
+      if (i < 0 || !step) return;
+      event.preventDefault();
+      const col = Math.min(2, Math.max(0, (i % 3) + step[0]));
+      const rowIndex = Math.min(2, Math.max(0, Math.floor(i / 3) + step[1]));
+      buttons[rowIndex * 3 + col].focus();
+    });
+    $('[data-reset]').addEventListener('click', () => newGame());
+    root.querySelectorAll<HTMLInputElement>('input[name="ttt-first"]').forEach((r) => r.addEventListener('change', () => newGame()));
+    root.querySelectorAll<HTMLInputElement>('input[name="ttt-level"]').forEach((r) =>
+      r.addEventListener('change', () => log('note', `# opponent is now ${r.value}`)),
+    );
+
+    // ---- boot -----------------------------------------------------------
+    for (const name of ['first', 'level']) {
+      const wanted = root.querySelector<HTMLInputElement>(`input[name="ttt-${name}"][value="${params.get(name)}"]`);
+      if (wanted) wanted.checked = true;
+    }
+    log('note', '# 255,168 possible games. perfect play loses none of them.');
+    const preload = (params.get('moves') ?? '').split(',').filter(Boolean).map(Number);
+    newGame(preload.length === 0);
+    let who: 'X' | 'O' = radio('ttt-first') === 'cpu' ? 'O' : 'X';
+    let ended = false;
+    for (const move of preload) {
+      if (ended || !(move >= 0 && move < 9) || board[move]) break;
+      place(move, who);
+      log(who === 'X' ? 'you' : 'cpu', `${String(ply).padStart(2, '0')} ${who === 'X' ? 'you' : 'cpu'} ${coord(move)}`);
+      ended = settle(move);
+      who = who === 'X' ? 'O' : 'X';
+    }
+    if (preload.length && !ended && who === 'O') cpuTurn();
+  }
+
+  document.querySelectorAll<HTMLElement>('[data-ttt]').forEach(init);
+</script>
