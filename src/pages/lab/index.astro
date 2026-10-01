@@ -1,21 +1,39 @@
 ---
-// Motion proof of concept: the hero with a canvas scene above it. Not linked from the site.
+// Index of the motion experiments. Not linked from the site.
 import BaseLayout from '../../layouts/BaseLayout.astro';
 import TopBar from '../../components/TopBar.astro';
-import Hero from '../../components/Hero.astro';
 import BootScene from '../../components/BootScene.astro';
 import { getContent } from '../../data/content';
 
 const content = getContent('en');
 const label = content.promptUser.split('@')[0];
+
+const experiments = [
+  { href: '/lab/machine/', name: 'machine/', note: 'surveillance HUD hero, 26s authored timeline' },
+  { href: '/lab/shell/', name: 'shell/', note: 'the whole site as a working terminal' },
+  { href: '/lab/tictactoe/', name: 'tictactoe/', note: 'play minimax and watch it think' },
+];
 ---
 
-<BaseLayout locale="en" title="lab — motion" description="Motion proof of concept.">
+<BaseLayout locale="en" title="lab — motion" description="Motion experiments.">
   <TopBar promptUser={content.promptUser} promptSuffix={content.promptSuffix} locale="en" />
   <main>
     <section>
+      <p class="prompt">$ ls lab/</p>
+      <div class="posts">
+        {
+          experiments.map((experiment) => (
+            <a href={experiment.href}>
+              <span class="yr">{experiment.name}</span>
+              {experiment.note}
+            </a>
+          ))
+        }
+      </div>
+    </section>
+    <section>
+      <p class="prompt">$ ./boot <span class="comment"># first sketch</span></p>
       <BootScene label={label} />
     </section>
-    <Hero content={content} />
   </main>
 </BaseLayout>
