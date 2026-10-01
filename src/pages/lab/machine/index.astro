@@ -1,0 +1,18 @@
+---
+// Motion direction "The Machine": full-width surveillance-HUD scene handing off to the real hero. Not linked from the site.
+import BaseLayout from '../../../layouts/BaseLayout.astro';
+import TopBar from '../../../components/TopBar.astro';
+import Hero from '../../../components/Hero.astro';
+import MachineScene from '../../../components/MachineScene.astro';
+import { getContent } from '../../../data/content';
+
+const content = getContent('en');
+---
+
+<BaseLayout locale="en" title="lab — the machine" description="Motion direction: the Machine's point of view.">
+  <TopBar promptUser={content.promptUser} promptSuffix={content.promptSuffix} locale="en" />
+  <MachineScene locale="en" />
+  <main>
+    <Hero content={content} />
+  </main>
+</BaseLayout>
