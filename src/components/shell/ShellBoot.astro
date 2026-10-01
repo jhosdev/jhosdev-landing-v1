@@ -1,0 +1,72 @@
+---
+// Full-screen intro overlay: boot log -> title card -> login. Decorative only
+// (aria-hidden, shown by script), so nothing here is needed to read the page.
+// `gap` is the authored pause before each line, in ms: the rhythm of the boot.
+interface Props {
+  user: string;
+  host: string;
+  /** Title card text. */
+  name: string;
+  /** Typed under the title. */
+  label: string;
+  locale: string;
+  counts: { projects: number; stack: number; principles: number; roles: number; posts: number };
+  skip: string;
+}
+
+const { user, host, name, label, locale, counts, skip } = Astro.props;
+
+const n = (count: number, one: string, many = `${one}s`) => `${count} ${count === 1 ? one : many}`;
+const lines: { tag: string; text: string; gap: number }[] = [
+  { tag: '    0.000000', text: 'Linux version 6.6.87-portfolio (tty1) #1 SMP PREEMPT_DYNAMIC', gap: 0 },
+  { tag: '    0.000000', text: `Command line: root=/home/${user} ro quiet lang=${locale}`, gap: 30 },
+  { tag: '    0.004107', text: 'BIOS-provided physical RAM map:', gap: 30 },
+  { tag: '    0.004109', text: 'BIOS-e820: [mem 0x0000000000000000-0x000000000009fbff] usable', gap: 20 },
+  { tag: '    0.004112', text: 'BIOS-e820: [mem 0x0000000000100000-0x00000000bffdffff] usable', gap: 20 },
+  { tag: '    0.018442', text: 'clocksource: tsc-early: mask: 0xffffffffffffffff', gap: 40 },
+  { tag: '    0.031760', text: 'Console: colour dummy device 80x25', gap: 30 },
+  { tag: '    0.092107', text: 'random: crng init done', gap: 50 },
+  { tag: '    0.207334', text: 'NET: Registered PF_INET6 protocol family', gap: 40 },
+  { tag: '    0.311870', text: 'EXT4-fs (sda1): mounted filesystem read-only', gap: 150 },
+  { tag: '    0.402264', text: 'systemd[1]: Reached target Local File Systems.', gap: 110 },
+  { tag: '  OK  ', text: `Mounted /home/${user}.`, gap: 180 },
+  { tag: '  OK  ', text: 'Loaded about.txt.', gap: 70 },
+  { tag: '  OK  ', text: `Loaded projects/ (${n(counts.projects, 'entry', 'entries')}).`, gap: 90 },
+  { tag: '  OK  ', text: `Loaded stack.txt (${n(counts.stack, 'row')}).`, gap: 60 },
+  { tag: '  OK  ', text: `Loaded principles.txt (${n(counts.principles, 'row')}).`, gap: 110 },
+  { tag: '  OK  ', text: `Loaded experience.log (${n(counts.roles, 'role')}).`, gap: 70 },
+  { tag: '  OK  ', text: `Loaded writing/ (${n(counts.posts, 'post')}).`, gap: 90 },
+  { tag: '  OK  ', text: 'Started contact.service.', gap: 150 },
+  { tag: ' WARN ', text: 'tty1: unidentified visitor. Granting read-only access.', gap: 280 },
+  { tag: '  OK  ', text: 'Reached target Login Prompt.', gap: 240 },
+];
+const kind = (tag: string) => (tag.includes('OK') ? 'ok' : tag.includes('WARN') ? 'warn' : 'kern');
+---
+
+<div class="sh-boot" data-boot aria-hidden="true">
+  <div class="sh-scene sh-scene-log">
+    {
+      lines.map((line) => (
+        <p class={`sh-bl sh-bl-${kind(line.tag)}`} data-gap={line.gap}>
+          <span>[{line.tag}]</span> {line.text}
+        </p>
+      ))
+    }
+  </div>
+
+  <div class="sh-scene sh-scene-title">
+    <p class="sh-anno sh-anno-tl">eps1.0_{user}.sh</p>
+    <p class="sh-anno sh-anno-tr">{host} / tty1</p>
+    <p class="sh-title" data-title data-text={name}></p>
+    <p class="sh-role"><b>&gt;</b> <span class="sh-typed" data-role>{label}</span></p>
+  </div>
+
+  <div class="sh-scene sh-scene-login">
+    <p data-login>{host} login: <span class="sh-typed">{user}</span></p>
+    <p data-login>Password: <span class="sh-typed">********</span></p>
+    <p data-login>Last login: <span data-login-date></span> on tty1</p>
+  </div>
+
+  <p class="sh-skip">[ {skip} ]</p>
+  <i class="sh-progress" data-progress></i>
+</div>

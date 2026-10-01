@@ -1,0 +1,27 @@
+---
+// One entry of the session transcript: a prompt line with the command, then its
+// output. The output node carries `data-ref` so the interactive prompt can
+// reprint it by cloning, which keeps every fact in the server-rendered HTML.
+interface Props {
+  /** Section id and `data-ref` of the output. */
+  id: string;
+  /** Command shown on the prompt line. */
+  cmd: string;
+  /** e.g. "ada@prod" */
+  promptUser: string;
+  /** Screen-reader section name; when set the prompt line is the section's h2. */
+  label?: string;
+}
+
+const { id, cmd, promptUser, label } = Astro.props;
+const Line = label ? 'h2' : 'p';
+---
+
+<section class="sh-block" id={id} data-block>
+  <Line class="sh-cmd">
+    <span class="sh-ps1" aria-hidden="true">{promptUser}<i>:~</i><b>$</b></span>{' '}<span class="sh-typed">{cmd}</span>{label && <span class="sh-vh"> ({label})</span>}
+  </Line>
+  <div class="sh-out" data-ref={id}>
+    <slot />
+  </div>
+</section>

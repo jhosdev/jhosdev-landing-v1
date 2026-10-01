@@ -1,0 +1,63 @@
+---
+// Bottom dock: command chips plus the real prompt. Without JavaScript the chips
+// are plain anchors to the sections and the prompt is hidden.
+interface Chip {
+  label: string;
+  /** Command the chip runs. */
+  run: string;
+  /** No-JS fallback target; chips without one only exist with JavaScript. */
+  href?: string;
+}
+
+interface Props {
+  chips: Chip[];
+  promptUser: string;
+  chipsLabel: string;
+  inputLabel: string;
+  placeholder: string;
+  runLabel: string;
+}
+
+const { chips, promptUser, chipsLabel, inputLabel, placeholder, runLabel } = Astro.props;
+---
+
+<div class="sh-dock" data-dock>
+  <div class="sh-wrap">
+    <nav class="sh-chips" aria-label={chipsLabel}>
+      {
+        chips.map((chip) =>
+          chip.href ? (
+            <a class="sh-chip" href={chip.href} data-run={chip.run}>
+              {chip.label}
+            </a>
+          ) : (
+            <button class="sh-chip sh-js-only" type="button" data-run={chip.run}>
+              {chip.label}
+            </button>
+          ),
+        )
+      }
+    </nav>
+    <form class="sh-prompt sh-js-only" data-form autocomplete="off">
+      <label for="sh-input">
+        <span class="sh-vh">{inputLabel}</span>
+        <span class="sh-ps1" aria-hidden="true">{promptUser}<i>:~</i><b>$</b></span>
+      </label>
+      <span class="sh-field">
+        <span class="sh-ghost" data-ghost aria-hidden="true"></span>
+        <input
+          id="sh-input"
+          type="text"
+          name="command"
+          placeholder={placeholder}
+          autocomplete="off"
+          autocapitalize="none"
+          autocorrect="off"
+          spellcheck="false"
+          enterkeyhint="go"
+        />
+      </span>
+      <button class="sh-enter" type="submit" aria-label={runLabel}>↵</button>
+    </form>
+  </div>
+</div>

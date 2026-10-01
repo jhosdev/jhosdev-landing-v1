@@ -1,0 +1,1276 @@
+/* /lab/shell: "the site IS a terminal". Everything is scoped under .sh-root or
+   an html.sh-* state class so it cannot leak into the other pages.
+
+   Colour discipline (three signals on the shared neutral ramp):
+     red   = the signal. Cursor, prompt sigil, title cards, errors, the one CTA.
+     green = the machine saying OK. Boot status, live/active dots.
+     cyan  = never a UI colour here; it only exists as the ghost in a glitch.  */
+
+.sh-root {
+  --sh-red: #ff2e2e;
+  --sh-red-glow: rgba(255, 46, 46, 0.4);
+  --sh-ghost: #6ee0ff;
+  --sh-pad: clamp(18px, 4.5vw, 64px);
+  --sh-out: cubic-bezier(0.16, 1, 0.3, 1); /* expo out: fast attack, long settle */
+  --sh-back: cubic-bezier(0.34, 1.56, 0.64, 1); /* overshoot */
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  font: 400 14px/1.65 var(--font-mono);
+  color: var(--color-body);
+}
+
+.sh-wrap {
+  max-width: 1180px;
+  margin-inline: auto;
+}
+
+.sh-vh {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+html:not(.sh-js) .sh-js-only {
+  display: none;
+}
+
+.sh-root a {
+  color: var(--color-text);
+  text-decoration: underline;
+  text-decoration-color: var(--color-border-hover);
+  text-underline-offset: 4px;
+  transition:
+    color 0.15s,
+    text-decoration-color 0.15s;
+}
+
+.sh-root a:hover {
+  opacity: 1;
+  color: var(--sh-red);
+  text-decoration-color: var(--sh-red);
+}
+
+.sh-root :focus-visible {
+  outline: 2px solid var(--sh-red);
+  outline-offset: 3px;
+  border-radius: 2px;
+}
+
+.sh-root ::selection {
+  background: var(--sh-red);
+  color: #0b0e13;
+}
+
+/* ---------- status bar ---------- */
+
+.sh-bar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  padding: 11px var(--sh-pad);
+  border-bottom: 1px solid var(--color-border);
+  background: rgba(11, 14, 19, 0.92);
+  backdrop-filter: blur(8px);
+  font-size: 12px;
+  color: var(--color-muted);
+}
+
+.sh-bar .sh-wrap {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+.sh-root .sh-id {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--color-body-strong);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.sh-path {
+  color: var(--color-muted);
+  margin-left: -10px;
+}
+
+.sh-led {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--sh-red);
+  box-shadow: 0 0 10px var(--sh-red-glow);
+}
+
+.sh-uptime {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.sh-lang {
+  display: flex;
+  gap: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.sh-lang > * {
+  padding: 2px 6px;
+}
+
+.sh-root .sh-lang a {
+  color: var(--color-muted);
+  text-decoration: none;
+}
+
+.sh-lang [aria-current] {
+  color: var(--color-bg);
+  background: var(--color-body-strong);
+  border-radius: 2px;
+}
+
+/* ---------- transcript ---------- */
+
+.sh-root main {
+  flex: 1;
+  max-width: none;
+  margin: 0;
+  padding: clamp(28px, 6vh, 64px) var(--sh-pad) 40px;
+}
+
+.sh-root section {
+  margin: 0;
+}
+
+.sh-block {
+  scroll-margin-top: 64px;
+  padding-bottom: clamp(48px, 8vh, 84px);
+}
+
+.sh-root .sh-cmd {
+  margin: 0 0 22px;
+  font: inherit;
+  font-weight: 500;
+  color: var(--color-text);
+  letter-spacing: 0;
+}
+
+.sh-ps1 {
+  color: var(--color-muted);
+  font-weight: 400;
+  white-space: nowrap;
+}
+
+.sh-ps1 i {
+  font-style: normal;
+  color: var(--color-faint);
+}
+
+.sh-ps1 b {
+  font-weight: 500;
+  color: var(--sh-red);
+}
+
+.sh-typed {
+  display: inline-block;
+  vertical-align: bottom;
+  white-space: nowrap;
+}
+
+/* whoami: the title card */
+
+.sh-root .sh-headline {
+  margin: 0 0 clamp(20px, 3vw, 36px);
+  font-family: var(--font-mono);
+  letter-spacing: 0;
+  line-height: 1;
+}
+
+.sh-top {
+  display: block;
+  font-weight: 700;
+  /* Fit one line: the column width divided by the character count (Plex Mono advance is 0.6em). */
+  font-size: clamp(38px, calc(min(100vw - 2 * var(--sh-pad), 1180px) / (var(--chars) * 0.57)), 132px);
+  line-height: 0.92;
+  letter-spacing: -0.035em;
+  text-transform: uppercase;
+  color: var(--color-text);
+  text-shadow: 0 0 34px rgba(240, 244, 248, 0.16);
+}
+
+.sh-mask {
+  display: inline-block;
+  overflow: hidden;
+  vertical-align: bottom;
+  /* Room for the glyph overshoot the mask would otherwise crop. */
+  padding: 0.06em 0.04em 0.08em 0;
+  margin: -0.06em -0.04em -0.08em 0;
+}
+
+.sh-rise {
+  display: inline-block;
+}
+
+.sh-dot {
+  color: var(--sh-red);
+  text-shadow: 0 0 28px var(--sh-red-glow);
+}
+
+.sh-sub {
+  display: block;
+  margin-top: clamp(14px, 2vw, 24px);
+  font-size: clamp(17px, 2.3vw, 30px);
+  font-weight: 400;
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+  color: var(--color-body-strong);
+}
+
+.sh-lede {
+  max-width: 68ch;
+  margin: 0 0 clamp(28px, 4vw, 44px);
+  font-size: 15px;
+  color: var(--color-body);
+}
+
+.sh-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+  gap: 24px 3ch;
+  margin: 0;
+  padding-top: 22px;
+  border-top: 1px solid var(--color-border);
+}
+
+.sh-stats > div {
+  display: flex;
+  flex-direction: column-reverse;
+  transform-origin: 0 100%;
+}
+
+.sh-stats dd {
+  font-size: clamp(28px, 3.6vw, 46px);
+  font-weight: 500;
+  line-height: 1.1;
+  letter-spacing: -0.03em;
+  color: var(--color-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.sh-stats dt {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--color-muted);
+}
+
+/* listings */
+
+.sh-total {
+  margin: 0 0 10px;
+  font-size: 12px;
+  color: var(--color-muted);
+}
+
+.sh-perm {
+  color: var(--color-faint);
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+.sh-project {
+  display: grid;
+  grid-template-columns: 11ch minmax(0, 1fr);
+  gap: 0 3ch;
+  padding: 18px 0;
+  border-top: 1px solid var(--color-border);
+}
+
+.sh-project:last-child {
+  border-bottom: 1px solid var(--color-border);
+}
+
+.sh-project header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px 3ch;
+  margin-bottom: 6px;
+}
+
+.sh-root h3 {
+  margin: 0;
+  font: inherit;
+  font-size: 17px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  color: var(--color-text);
+}
+
+.sh-project h3 span {
+  color: var(--color-muted);
+  transition: color 0.15s;
+}
+
+.sh-project:hover h3 span {
+  color: var(--sh-red);
+}
+
+.sh-project:hover .sh-perm {
+  color: var(--color-muted);
+}
+
+.sh-project p {
+  max-width: 72ch;
+}
+
+.sh-status {
+  font-size: 12px;
+  color: var(--color-muted);
+  white-space: nowrap;
+}
+
+.sh-status.is-active,
+.sh-status.is-active span {
+  color: var(--color-green);
+}
+
+.sh-tags {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--color-muted);
+}
+
+.sh-kv {
+  margin: 0;
+}
+
+.sh-kv > div {
+  display: grid;
+  grid-template-columns: 14ch minmax(0, 1fr);
+  gap: 0 3ch;
+  padding: 9px 0;
+  border-top: 1px solid var(--color-border);
+}
+
+.sh-kv > div:last-child {
+  border-bottom: 1px solid var(--color-border);
+}
+
+.sh-kv dt {
+  color: var(--color-muted);
+}
+
+.sh-kv dd {
+  color: var(--color-body-strong);
+}
+
+.sh-jobs > li {
+  display: grid;
+  grid-template-columns: 14ch minmax(0, 1fr);
+  gap: 0 3ch;
+  padding: 16px 0;
+  border-top: 1px solid var(--color-border);
+}
+
+.sh-jobs > li:last-child {
+  border-bottom: 1px solid var(--color-border);
+}
+
+.sh-when {
+  color: var(--color-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.sh-at {
+  color: var(--color-body);
+  font-weight: 400;
+}
+
+.sh-jobs p {
+  max-width: 72ch;
+  margin-top: 4px;
+}
+
+.sh-root .sh-posts a {
+  display: grid;
+  grid-template-columns: 11ch 5ch minmax(0, 1fr);
+  gap: 0 3ch;
+  padding: 14px 0;
+  border-top: 1px solid var(--color-border);
+  border-bottom: 1px solid var(--color-border);
+  margin-bottom: -1px;
+  text-decoration: none;
+  color: var(--color-body);
+}
+
+.sh-yr {
+  color: var(--color-muted);
+}
+
+.sh-file {
+  color: var(--color-text);
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.sh-posts a:hover .sh-file {
+  color: var(--sh-red);
+}
+
+.sh-desc {
+  grid-column: 3;
+}
+
+.sh-call {
+  max-width: 22ch;
+  margin: 0 0 26px;
+  font-size: clamp(26px, 4.2vw, 54px);
+  font-weight: 700;
+  line-height: 1.02;
+  letter-spacing: -0.035em;
+  color: var(--color-text);
+}
+
+.sh-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 4ch;
+}
+
+.sh-n {
+  color: var(--color-faint);
+  margin-right: 0.5ch;
+}
+
+.sh-root .sh-links a.is-primary {
+  color: var(--sh-red);
+  text-decoration-color: var(--sh-red);
+}
+
+.sh-motd {
+  color: var(--color-faint);
+  font-size: 12px;
+}
+
+/* ---------- interactive output ---------- */
+
+.sh-log .sh-block {
+  padding-bottom: 36px;
+}
+
+.sh-log .sh-cmd {
+  margin-bottom: 12px;
+}
+
+.sh-t {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--color-body-strong);
+}
+
+.sh-t-dim {
+  color: var(--color-muted);
+}
+
+.sh-t-error {
+  color: var(--sh-red);
+}
+
+.sh-menu {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 0 4ch;
+  margin-top: 8px;
+}
+
+.sh-menu li {
+  display: contents;
+}
+
+.sh-menu.is-wide {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 4ch;
+}
+
+.sh-menu button {
+  padding: 3px 0;
+  border: 0;
+  background: none;
+  color: var(--color-text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.sh-menu button.is-dir {
+  font-weight: 700;
+}
+
+.sh-menu button:hover {
+  color: var(--sh-red);
+}
+
+.sh-menu span {
+  padding: 3px 0;
+  color: var(--color-muted);
+}
+
+/* ---------- dock: chips + prompt ---------- */
+
+.sh-dock {
+  position: sticky;
+  bottom: 0;
+  z-index: 20;
+  padding: 10px var(--sh-pad) calc(12px + env(safe-area-inset-bottom, 0px));
+  border-top: 1px solid var(--color-border);
+  background: rgba(11, 14, 19, 0.94);
+  backdrop-filter: blur(8px);
+  transition: transform 0.7s var(--sh-out);
+}
+
+html.sh-js:not(.sh-docked) .sh-dock {
+  transform: translateY(110%);
+}
+
+.sh-chips {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  margin: 0 calc(var(--sh-pad) * -1) 10px;
+  padding: 2px var(--sh-pad);
+}
+
+.sh-chips::-webkit-scrollbar {
+  display: none;
+}
+
+.sh-root .sh-chip {
+  flex: none;
+  padding: 5px 11px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-panel);
+  color: var(--color-nav);
+  font-size: 12px;
+  line-height: 1.5;
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    color 0.15s,
+    border-color 0.15s,
+    transform 0.15s var(--sh-back);
+}
+
+.sh-root .sh-chip:hover {
+  color: var(--color-text);
+  border-color: var(--sh-red);
+}
+
+.sh-root .sh-chip:active {
+  transform: scale(0.94);
+}
+
+.sh-prompt {
+  display: flex;
+  align-items: center;
+  padding: 9px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-panel);
+  transition:
+    border-color 0.15s,
+    box-shadow 0.15s;
+}
+
+.sh-prompt:focus-within {
+  border-color: var(--sh-red);
+  box-shadow:
+    0 0 0 1px var(--sh-red),
+    0 0 28px -6px var(--sh-red-glow);
+}
+
+.sh-field {
+  margin-left: 1ch;
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+}
+
+.sh-field input {
+  position: relative;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  background: none;
+  color: var(--color-text);
+  caret-color: var(--sh-red);
+  caret-shape: block;
+}
+
+.sh-root .sh-field input:focus-visible {
+  outline: 0; /* the whole prompt row carries the focus ring */
+}
+
+.sh-field input::placeholder {
+  color: var(--color-faint);
+}
+
+.sh-ghost {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  white-space: pre;
+  color: var(--color-muted);
+  pointer-events: none;
+}
+
+.sh-ghost span {
+  visibility: hidden;
+}
+
+.sh-enter {
+  flex: none;
+  margin: -4px -4px -4px 8px;
+  padding: 2px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: none;
+  color: var(--color-muted);
+  cursor: pointer;
+}
+
+.sh-enter:hover {
+  color: var(--sh-red);
+  border-color: var(--sh-red);
+}
+
+/* ---------- motion: typed commands, printed output ---------- */
+
+/* A block waits unseen, types its command, then prints its output line by line.
+   --n is the number of typed characters, --i the line index, --lag only shifts
+   animations when a frame is frozen with ?t= for screenshots. */
+
+/* opacity, not visibility: a waiting block stays in the accessibility tree. */
+.sh-block[data-state='wait'],
+.sh-block[data-state='typing'] .sh-out {
+  opacity: 0;
+}
+
+.sh-block[data-state='typing'] .sh-typed,
+.sh-boot .sh-typed {
+  overflow: hidden;
+  width: calc(var(--n, 0) * 1ch);
+}
+
+.sh-block[data-state='typing'] .sh-cmd::after,
+.sh-scene-login .is-cur::after {
+  content: '▋';
+  color: var(--sh-red);
+}
+
+.sh-block[data-state='run'] .sh-l {
+  animation: sh-print 0.6s var(--sh-out) both;
+  animation-delay: calc(var(--i, 0) * 55ms + var(--lag, 0s));
+}
+
+.sh-block[data-state='run'] .sh-rise {
+  animation-name: sh-rise;
+  animation-duration: 0.9s;
+  animation-delay: calc(var(--i, 0) * 70ms + var(--lag, 0s));
+}
+
+.sh-block[data-state='run'] .sh-pop {
+  animation-name: sh-pop;
+  animation-timing-function: var(--sh-back);
+}
+
+.sh-block[data-state='run'] .sh-t-error {
+  animation:
+    sh-print 0.2s var(--sh-out) both,
+    sh-err 0.34s steps(1) both;
+}
+
+@keyframes sh-print {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+}
+
+@keyframes sh-rise {
+  from {
+    transform: translateY(112%);
+  }
+}
+
+@keyframes sh-pop {
+  from {
+    opacity: 0;
+    transform: translateY(18px) scale(0.86);
+  }
+}
+
+@keyframes sh-err {
+  0% {
+    transform: translateX(-7px);
+    text-shadow:
+      5px 0 var(--sh-ghost),
+      -3px 0 #fff;
+  }
+  25% {
+    transform: translateX(5px) skewX(-14deg);
+    text-shadow: -6px 0 var(--sh-ghost);
+  }
+  50% {
+    transform: translateX(-2px);
+    text-shadow: 3px 0 var(--sh-ghost);
+  }
+  75% {
+    transform: translateX(2px);
+    text-shadow: none;
+  }
+  100% {
+    transform: none;
+  }
+}
+
+/* Signal tear: the picture loses sync for a few frames. Used on scene cuts and `rm`. */
+.sh-root.is-tear main,
+.sh-root.is-tear .sh-bar {
+  animation: sh-tear 0.36s steps(1) both;
+}
+
+@keyframes sh-tear {
+  0% {
+    transform: translateX(-3%) skewX(-8deg);
+    clip-path: inset(8% 0 58% 0);
+    filter: saturate(3) brightness(1.6);
+  }
+  18% {
+    transform: translateX(4%) skewX(5deg);
+    clip-path: inset(44% 0 22% 0);
+  }
+  36% {
+    transform: translateX(-1.5%);
+    clip-path: inset(0 0 71% 0);
+    filter: brightness(1.3);
+  }
+  54% {
+    transform: translateX(2%) skewX(-2deg);
+    clip-path: inset(63% 0 6% 0);
+  }
+  72% {
+    transform: translateX(-0.6%);
+    clip-path: inset(0);
+    filter: none;
+  }
+  100% {
+    transform: none;
+    clip-path: inset(0);
+  }
+}
+
+/* ---------- intro overlay ---------- */
+
+.sh-boot {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  overflow: hidden;
+  background: #05070a;
+  color: var(--color-body);
+  cursor: pointer;
+}
+
+html.sh-intro .sh-boot,
+.sh-boot.is-flash {
+  display: block;
+}
+
+.sh-scene {
+  display: none;
+  position: absolute;
+  inset: 0;
+  padding: clamp(20px, 5vh, 56px) var(--sh-pad);
+}
+
+/* CRT power-on: a line of light that opens into the picture. */
+.sh-boot::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  z-index: 2;
+  height: 2px;
+  background: #fff;
+  box-shadow: 0 0 30px 6px rgba(255, 255, 255, 0.55);
+  opacity: 0;
+}
+
+.sh-boot[data-scene='log']::before {
+  animation: sh-power 0.5s cubic-bezier(0.7, 0, 0.2, 1) both;
+  animation-delay: var(--lag, 0s);
+}
+
+@keyframes sh-power {
+  0% {
+    opacity: 1;
+    transform: scale(0, 1);
+  }
+  38% {
+    opacity: 1;
+    transform: scale(1, 1);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1, 700);
+  }
+}
+
+/* The one red line that says how long this takes. */
+.sh-progress {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  background: var(--sh-red);
+  box-shadow: 0 0 14px var(--sh-red-glow);
+  transform: scaleX(var(--p, 0));
+  transform-origin: 0 50%;
+  transition: transform 0.25s linear;
+}
+
+.sh-boot[data-scene='log'] .sh-scene-log,
+.sh-boot[data-scene='login'] .sh-scene-login {
+  display: block;
+}
+
+.sh-bl {
+  visibility: hidden;
+  overflow: hidden;
+  white-space: pre;
+  font-size: clamp(11px, 1.05vw, 15px);
+  line-height: 1.7;
+  color: var(--color-body);
+}
+
+.sh-bl.on {
+  visibility: visible;
+  /* Phosphor decay: each line lands hot and cools to its colour. */
+  animation: sh-decay 0.45s ease-out var(--lag, 0s) both;
+}
+
+@keyframes sh-decay {
+  from {
+    color: #fff;
+    text-shadow: 0 0 14px rgba(255, 255, 255, 0.7);
+  }
+}
+
+.sh-bl span {
+  color: var(--color-faint);
+}
+
+.sh-bl-ok span {
+  color: var(--color-green);
+}
+
+.sh-bl-warn,
+.sh-bl-warn span {
+  color: var(--sh-red);
+  text-shadow: 0 0 18px var(--sh-red-glow);
+}
+
+/* title card */
+
+.sh-boot.is-flash .sh-role,
+.sh-boot.is-flash .sh-skip,
+.sh-boot.is-flash .sh-progress {
+  display: none;
+}
+
+.sh-boot[data-scene='title'] .sh-scene-title {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  animation: sh-tear 0.3s steps(1) both;
+  animation-delay: var(--lag, 0s);
+}
+
+.sh-title {
+  --chars: 8;
+  --rows: 2;
+  font-weight: 700;
+  font-size: min(calc(88vw / (var(--chars) * 0.585)), calc(60vh / var(--rows)));
+  line-height: 0.88;
+  letter-spacing: -0.035em;
+  text-transform: uppercase;
+  color: var(--sh-red);
+  text-shadow: 0 0 60px var(--sh-red-glow);
+  transition: transform 0.12s cubic-bezier(0.4, 0, 1, 1);
+}
+
+.sh-title span {
+  display: block;
+  position: relative;
+  width: max-content;
+  transform-origin: 0 60%;
+  animation: sh-slam 0.7s var(--sh-out) both;
+  animation-delay: calc(var(--i, 0) * 0.11s + var(--lag, 0s));
+}
+
+@keyframes sh-slam {
+  0% {
+    opacity: 0;
+    transform: scale(1.5);
+    letter-spacing: 0.2em;
+  }
+  12% {
+    opacity: 1;
+  }
+}
+
+/* Two ghosts of each word, cut into slices: chromatic split that settles in ~0.5s. */
+.sh-title span::before,
+.sh-title span::after {
+  content: attr(data-text);
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  text-shadow: none;
+}
+
+.sh-title span::before {
+  color: var(--sh-ghost);
+  animation: sh-slice-a 0.55s steps(1) both;
+  animation-delay: calc(var(--i, 0) * 0.11s + var(--lag, 0s));
+}
+
+.sh-title span::after {
+  color: var(--color-text);
+  animation: sh-slice-b 0.55s steps(1) both;
+  animation-delay: calc(var(--i, 0) * 0.11s + var(--lag, 0s));
+}
+
+.sh-title.is-jolt span::before {
+  animation: sh-slice-b 0.22s steps(1) var(--lag-jolt, 0s) both;
+}
+
+.sh-title.is-jolt span::after {
+  animation: sh-slice-a 0.22s steps(1) var(--lag-jolt, 0s) both;
+}
+
+/* Anticipation before the cut: the card pulls back, then is gone. */
+.sh-title.is-out {
+  transform: scale(0.965);
+}
+
+@keyframes sh-slice-a {
+  0% {
+    opacity: 0.9;
+    transform: translateX(-0.07em);
+    clip-path: inset(0 0 64% 0);
+  }
+  22% {
+    opacity: 0.9;
+    transform: translateX(0.06em);
+    clip-path: inset(38% 0 30% 0);
+  }
+  44% {
+    opacity: 0.85;
+    transform: translateX(-0.035em);
+    clip-path: inset(72% 0 4% 0);
+  }
+  66% {
+    opacity: 0.8;
+    transform: translateX(0.02em);
+    clip-path: inset(12% 0 74% 0);
+  }
+  88%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes sh-slice-b {
+  0% {
+    opacity: 0.9;
+    transform: translateX(0.05em);
+    clip-path: inset(55% 0 18% 0);
+  }
+  25% {
+    opacity: 0.9;
+    transform: translateX(-0.05em);
+    clip-path: inset(6% 0 80% 0);
+  }
+  50% {
+    opacity: 0.8;
+    transform: translateX(0.03em);
+    clip-path: inset(84% 0 2% 0);
+  }
+  75%,
+  100% {
+    opacity: 0;
+  }
+}
+
+.sh-anno {
+  position: absolute;
+  top: clamp(20px, 5vh, 56px);
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+}
+
+.sh-anno-tl {
+  left: var(--sh-pad);
+}
+
+.sh-anno-tr {
+  right: var(--sh-pad);
+}
+
+.sh-role {
+  margin-top: clamp(18px, 3vh, 34px);
+  font-size: clamp(14px, 1.7vw, 24px);
+  color: var(--color-text);
+  white-space: nowrap;
+}
+
+.sh-role b {
+  color: var(--sh-red);
+}
+
+/* login */
+
+.sh-scene-login {
+  font-size: clamp(15px, 1.7vw, 22px);
+  line-height: 1.8;
+  color: var(--color-body-strong);
+  animation: sh-tear 0.26s steps(1) both;
+  animation-delay: var(--lag, 0s);
+}
+
+.sh-scene-login p {
+  visibility: hidden;
+  white-space: nowrap;
+}
+
+.sh-scene-login p.on {
+  visibility: visible;
+}
+
+.sh-scene-login p:last-child {
+  color: var(--color-muted);
+}
+
+.sh-skip {
+  position: absolute;
+  right: var(--sh-pad);
+  bottom: clamp(18px, 4vh, 40px);
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+}
+
+/* ---------- CRT: scanlines, vignette, grain, rolling bar ---------- */
+
+.sh-crt {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.sh-crt::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(to bottom, transparent 0 2px, rgba(0, 0, 0, 0.2) 2px 3px);
+  animation: sh-flicker 5s steps(1) infinite;
+}
+
+.sh-crt::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse 120% 100% at 50% 50%, transparent 52%, rgba(0, 0, 0, 0.5) 100%);
+  box-shadow: inset 0 0 120px rgba(0, 0, 0, 0.45);
+}
+
+.sh-grain {
+  position: absolute;
+  inset: -120px;
+  opacity: 0.11;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 .55 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  animation: sh-grain 0.7s steps(1) infinite;
+}
+
+.sh-roll {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 26vh;
+  background: linear-gradient(to bottom, transparent, rgba(255, 255, 255, 0.028) 60%, transparent);
+  transform: translateY(-100%);
+  animation: sh-roll 8s linear infinite;
+}
+
+@keyframes sh-flicker {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  43% {
+    opacity: 0.82;
+  }
+  45% {
+    opacity: 1;
+  }
+  78% {
+    opacity: 0.9;
+  }
+  79% {
+    opacity: 1;
+  }
+}
+
+@keyframes sh-grain {
+  0% {
+    transform: translate(0, 0);
+  }
+  17% {
+    transform: translate(-63px, 41px);
+  }
+  33% {
+    transform: translate(52px, -87px);
+  }
+  50% {
+    transform: translate(-97px, -22px);
+  }
+  67% {
+    transform: translate(34px, 76px);
+  }
+  83% {
+    transform: translate(88px, 13px);
+  }
+}
+
+@keyframes sh-roll {
+  to {
+    transform: translateY(480%);
+  }
+}
+
+/* ?t= freeze: every animation sits on the frame its --lag points at. */
+html.sh-frozen .sh-root *,
+html.sh-frozen .sh-root *::before,
+html.sh-frozen .sh-root *::after {
+  animation-play-state: paused !important;
+}
+
+/* ---------- narrow ---------- */
+
+@media (max-width: 720px) {
+  .sh-root {
+    font-size: 13px;
+  }
+
+  .sh-path {
+    display: none;
+  }
+
+  /* Too narrow for one line: let it wrap and size it to the longest word instead. */
+  .sh-top {
+    font-size: clamp(34px, calc((100vw - 2 * var(--sh-pad)) / (var(--word) * 0.58)), 96px);
+  }
+
+  .sh-perm {
+    display: none;
+  }
+
+  .sh-project,
+  .sh-kv > div,
+  .sh-jobs > li {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .sh-root .sh-posts a {
+    grid-template-columns: 5ch minmax(0, 1fr);
+  }
+
+  .sh-desc {
+    grid-column: 2;
+  }
+
+  .sh-kv dt,
+  .sh-when {
+    font-size: 12px;
+  }
+
+  .sh-menu {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .sh-menu span {
+    padding: 0 0 8px;
+  }
+
+  .sh-root .sh-chip {
+    padding: 8px 13px;
+  }
+
+  /* 16px keeps iOS from zooming the page when the prompt takes focus. */
+  .sh-prompt {
+    font-size: 16px;
+    padding: 10px 12px;
+  }
+
+  .sh-prompt .sh-ps1 i {
+    display: none;
+  }
+
+  .sh-anno-tr {
+    display: none;
+  }
+
+  /* Kernel noise may clip; the one line that matters wraps. */
+  .sh-bl-warn {
+    white-space: pre-wrap;
+  }
+}
+
+/* ---------- reduced motion: no intro, no glitch, no flicker ---------- */
+
+@media (prefers-reduced-motion: reduce) {
+  .sh-root *,
+  .sh-root *::before,
+  .sh-root *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+
+  .sh-grain,
+  .sh-roll {
+    display: none;
+  }
+}
