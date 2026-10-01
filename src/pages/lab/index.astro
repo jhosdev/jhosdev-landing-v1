@@ -1,0 +1,21 @@
+---
+// Motion proof of concept: the hero with a canvas scene above it. Not linked from the site.
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import TopBar from '../../components/TopBar.astro';
+import Hero from '../../components/Hero.astro';
+import BootScene from '../../components/BootScene.astro';
+import { getContent } from '../../data/content';
+
+const content = getContent('en');
+const label = content.promptUser.split('@')[0];
+---
+
+<BaseLayout locale="en" title="lab — motion" description="Motion proof of concept.">
+  <TopBar promptUser={content.promptUser} promptSuffix={content.promptSuffix} locale="en" />
+  <main>
+    <section>
+      <BootScene label={label} />
+    </section>
+    <Hero content={content} />
+  </main>
+</BaseLayout>

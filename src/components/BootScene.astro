@@ -1,0 +1,285 @@
+---
+// Canvas island: one particle field morphing grid -> label -> neural net -> grid.
+// The frame is a pure function of time (window.seek(seconds), or ?seek=3.2 to
+// freeze), so the same scene can be captured frame-by-frame to video.
+interface Props {
+  /** Text the particles assemble into. */
+  label: string;
+}
+
+const { label } = Astro.props;
+---
+
+<div class="scene">
+  <p class="scene-caption" aria-hidden="true">
+    <span data-scene-caption>$ ./boot</span><span class="scene-cursor">▋</span>
+  </p>
+  <canvas data-scene data-label={label} aria-hidden="true"></canvas>
+</div>
+
+<style>
+  .scene {
+    background: var(--color-panel);
+    border: 1px solid var(--color-border);
+    border-radius: 6px;
+    overflow: hidden;
+  }
+
+  .scene-caption {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--color-green);
+    padding: 12px 16px 0;
+  }
+
+  .scene-cursor {
+    margin-left: 4px;
+    animation: caret-blink 1s step-end infinite;
+  }
+
+  canvas {
+    width: 100%;
+    aspect-ratio: 820 / 360;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .scene-cursor {
+      animation: none;
+    }
+  }
+</style>
+
+<script>
+  type RGB = [number, number, number];
+
+  // Logical stage; the canvas scales it to its CSS width.
+  const W = 820;
+  const H = 360;
+  const N = 1400;
+  const DURATION = 14;
+
+  // Palette = the DESIGN.md tokens, nothing new.
+  const FAINT: RGB = [61, 71, 84];
+  const MUTED: RGB = [93, 106, 121];
+  const TEXT: RGB = [240, 244, 248];
+  const GREEN: RGB = [87, 217, 163];
+  const CYAN: RGB = [110, 224, 255];
+
+  const GRID = 0;
+  const LABEL = 1;
+  const NET = 2;
+
+  // [start, from, to, caption]; a row with from === to is a hold.
+  const TIMELINE: [number, number, number, string][] = [
+    [0, GRID, GRID, '$ ./boot'],
+    [2, GRID, LABEL, '$ whoami'],
+    [3.5, LABEL, LABEL, '$ whoami'],
+    [6, LABEL, NET, '$ ./infer --forward-pass'],
+    [7.5, NET, NET, '$ ./infer --forward-pass'],
+    [12, NET, GRID, '$ clear'],
+  ];
+
+  const clamp = (x: number) => (x < 0 ? 0 : x > 1 ? 1 : x);
+  const ease = (k: number) => (k < 0.5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2);
+
+  // Seeded PRNG: same particles every load, so seek(t) is reproducible.
+  function mulberry32(seed: number) {
+    let a = seed;
+    return () => {
+      a = (a + 0x6d2b79f5) | 0;
+      let t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  interface Point {
+    x: number;
+    y: number;
+    /** NET only: position along the forward pass (layer index + progress along the edge). */
+    key: number;
+    /** NET only: particle sits on a node rather than an edge. */
+    node: boolean;
+  }
+
+  function gridPoints(): Point[] {
+    const cols = 56;
+    const rows = N / cols;
+    const points: Point[] = [];
+    // Column-major so the particle index grows with x, like the other formations.
+    for (let c = 0; c < cols; c++) {
+      for (let r = 0; r < rows; r++) {
+        points.push({ x: ((c + 0.5) * W) / cols, y: ((r + 0.5) * H) / rows, key: 0, node: false });
+      }
+    }
+    return points;
+  }
+
+  function labelPoints(label: string, rnd: () => number): Point[] {
+    const off = document.createElement('canvas');
+    off.width = W;
+    off.height = H;
+    const o = off.getContext('2d', { willReadFrequently: true });
+    if (!o) return gridPoints();
+    const font = (size: number) => `500 ${size}px "IBM Plex Mono", ui-monospace, monospace`;
+    o.font = font(100);
+    const size = Math.min(H * 0.5, (W * 0.8 * 100) / o.measureText(label).width);
+    o.font = font(size);
+    o.textAlign = 'center';
+    o.textBaseline = 'middle';
+    o.fillStyle = '#fff';
+    o.fillText(label, W / 2, H / 2);
+    const data = o.getImageData(0, 0, W, H).data;
+    const found: Point[] = [];
+    for (let y = 0; y < H; y += 2) {
+      for (let x = 0; x < W; x += 2) {
+        if (data[(y * W + x) * 4 + 3] > 128) found.push({ x, y, key: 0, node: false });
+      }
+    }
+    if (found.length === 0) return gridPoints();
+    // Shuffle before taking N so the sample is even across the glyphs.
+    for (let i = found.length - 1; i > 0; i--) {
+      const j = Math.floor(rnd() * (i + 1));
+      [found[i], found[j]] = [found[j], found[i]];
+    }
+    return Array.from({ length: N }, (_, i) => found[i % found.length]);
+  }
+
+  function netPoints(rnd: () => number): Point[] {
+    const layers = [4, 6, 6, 3];
+    const nodeAt = (layer: number, j: number) => ({
+      x: W * (0.18 + 0.2133 * layer),
+      y: H / 2 + (j - (layers[layer] - 1) / 2) * 46,
+    });
+    const points: Point[] = [];
+    for (let i = 0; i < N; i++) {
+      if (rnd() < 0.3) {
+        const layer = Math.floor(rnd() * layers.length);
+        const c = nodeAt(layer, Math.floor(rnd() * layers[layer]));
+        const angle = rnd() * Math.PI * 2;
+        const radius = Math.sqrt(rnd()) * 7;
+        points.push({ x: c.x + Math.cos(angle) * radius, y: c.y + Math.sin(angle) * radius, key: layer, node: true });
+      } else {
+        const layer = Math.floor(rnd() * (layers.length - 1));
+        const a = nodeAt(layer, Math.floor(rnd() * layers[layer]));
+        const b = nodeAt(layer + 1, Math.floor(rnd() * layers[layer + 1]));
+        const u = rnd();
+        points.push({ x: a.x + (b.x - a.x) * u, y: a.y + (b.y - a.y) * u, key: layer + u, node: false });
+      }
+    }
+    return points;
+  }
+
+  async function init(cv: HTMLCanvasElement) {
+    const ctx = cv.getContext('2d');
+    if (!ctx) return;
+    const caption = cv.parentElement?.querySelector('[data-scene-caption]');
+
+    // The label is sampled from rendered glyphs, so the font must be ready first.
+    await document.fonts.load('500 100px "IBM Plex Mono"').catch(() => undefined);
+
+    const rnd = mulberry32(7);
+    const byX = (a: Point, b: Point) => a.x - b.x;
+    // Every formation is sorted by x: particle i keeps roughly its column, so
+    // morphs read as the shape condensing in place instead of a crossfire.
+    const forms = [gridPoints(), labelPoints(cv.dataset.label ?? '>_', rnd).sort(byX), netPoints(rnd).sort(byX)];
+    const delay = Float32Array.from({ length: N }, (_, i) => (0.8 * i) / N + 0.2 * rnd());
+    const driftX = Float32Array.from({ length: N }, () => (rnd() - 0.5) * 50);
+    const driftY = Float32Array.from({ length: N }, () => (rnd() - 0.5) * 50);
+
+    let scale = 1;
+    let minSize = 1;
+
+    function look(form: number, p: Point, t: number, out: RGB): number {
+      let from = FAINT;
+      let to = FAINT;
+      let k = 0;
+      let size = 1.2;
+      if (form === GRID) {
+        // Ripple period 2s divides the loop, so t = DURATION matches t = 0.
+        to = MUTED;
+        k = 0.5 + 0.5 * Math.sin(Math.hypot(p.x - W / 2, p.y - H / 2) * 0.035 - t * Math.PI);
+      } else if (form === LABEL) {
+        from = to = TEXT;
+        size = 1.7;
+      } else {
+        const wave = ((((t - 7.5) * 1.6) % 4.2) + 4.2) % 4.2 - 0.3;
+        from = p.node ? GREEN : MUTED;
+        to = CYAN;
+        k = clamp(1 - Math.abs(p.key - wave) / 0.3);
+        size = p.node ? 2 : 1.4;
+      }
+      out[0] = from[0] + (to[0] - from[0]) * k;
+      out[1] = from[1] + (to[1] - from[1]) * k;
+      out[2] = from[2] + (to[2] - from[2]) * k;
+      return size;
+    }
+
+    const colA: RGB = [0, 0, 0];
+    const colB: RGB = [0, 0, 0];
+    let shownCaption = '';
+
+    function render(seconds: number) {
+      const t = ((seconds % DURATION) + DURATION) % DURATION;
+      let row = 0;
+      while (row + 1 < TIMELINE.length && TIMELINE[row + 1][0] <= t) row++;
+      const [start, a, b, text] = TIMELINE[row];
+      const end = row + 1 < TIMELINE.length ? TIMELINE[row + 1][0] : DURATION;
+      const progress = a === b ? 0 : (t - start) / (end - start);
+
+      if (caption && text !== shownCaption) caption.textContent = shownCaption = text;
+
+      ctx!.setTransform(scale, 0, 0, scale, 0, 0);
+      ctx!.clearRect(0, 0, W, H);
+      // ponytail: one fillStyle string per particle; batch by colour bucket if N grows past a few thousand.
+      for (let i = 0; i < N; i++) {
+        const pa = forms[a][i];
+        const pb = forms[b][i];
+        // Staggered left to right, like a line being typed.
+        const k = ease(clamp(progress * 1.4 - delay[i] * 0.4));
+        const arc = Math.sin(Math.PI * k);
+        const x = pa.x + (pb.x - pa.x) * k + driftX[i] * arc;
+        const y = pa.y + (pb.y - pa.y) * k + driftY[i] * arc;
+        const sizeA = look(a, pa, t, colA);
+        const sizeB = look(b, pb, t, colB);
+        const size = Math.max(minSize, sizeA + (sizeB - sizeA) * k);
+        ctx!.fillStyle = `rgb(${(colA[0] + (colB[0] - colA[0]) * k) | 0},${(colA[1] + (colB[1] - colA[1]) * k) | 0},${(colA[2] + (colB[2] - colA[2]) * k) | 0})`;
+        ctx!.fillRect(x - size / 2, y - size / 2, size, size);
+      }
+    }
+
+    const frozen = new URLSearchParams(location.search).get('seek');
+    const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
+    // Reduced motion gets the assembled label as a static frame.
+    let current = frozen !== null ? Number(frozen) || 0 : still ? 4.5 : 0;
+
+    function fit() {
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      cv.width = Math.round(cv.clientWidth * dpr);
+      cv.height = Math.round((cv.clientWidth * dpr * H) / W);
+      scale = cv.width / W;
+      // Keep dots at least ~1 CSS px on narrow screens.
+      minSize = (1.1 * dpr) / scale;
+      render(current);
+    }
+    new ResizeObserver(fit).observe(cv);
+    fit();
+
+    (window as unknown as { seek: (s: number) => void }).seek = (s) => render((current = s));
+    if (frozen !== null || still) return;
+
+    let visible = false;
+    let raf = 0;
+    const origin = performance.now();
+    const tick = (now: number) => {
+      render((current = (now - origin) / 1000));
+      raf = visible ? requestAnimationFrame(tick) : 0;
+    };
+    new IntersectionObserver(([entry]) => {
+      visible = entry.isIntersecting;
+      if (visible && !raf) raf = requestAnimationFrame(tick);
+    }).observe(cv);
+  }
+
+  document.querySelectorAll<HTMLCanvasElement>('canvas[data-scene]').forEach(init);
+</script>
