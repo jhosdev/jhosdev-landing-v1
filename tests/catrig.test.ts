@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DUTY, STRIDE, walkFoot } from '../src/components/machine/catrig';
+import { DUTY, POUNCE, STRIDE, newPose, newShape, pouncePose, sitPose, skin, walkFoot, walkPose } from '../src/components/machine/catrig';
 import { DEFAULT_INTRO, INTROS, homeCut } from '../src/components/machine/scene';
 
 describe('the cat walks, it does not slide', () => {
@@ -31,6 +31,38 @@ describe('the cat walks, it does not slide', () => {
     for (let s = 0; s < STRIDE; s += 0.1) {
       const down = [0, 1, 2, 3].filter((leg) => foot(s, leg).y === 0).length;
       expect(down).toBeGreaterThanOrEqual(2);
+    }
+  });
+});
+
+describe('the silhouette', () => {
+  const p = newPose();
+  const s = newShape();
+  /** How far above the ground the lowest part of the shape is, around x. */
+  const gap = (x: number) => {
+    let low = Infinity;
+    for (let i = 0; i < s.discs.length; i += 3) if (Math.abs(s.discs[i] - x) < 2.5) low = Math.min(low, s.discs[i + 1] - s.discs[i + 2]);
+    return low;
+  };
+
+  it('stands on its feet: a planted foot is drawn on the ground, walking and sitting', () => {
+    for (let t = 0; t < 2.4; t += 0.02) {
+      walkPose(p, t);
+      skin(p, s);
+      for (let leg = 0; leg < 4; leg++) if (p.feet[leg * 4 + 1] === 0) expect(gap(p.feet[leg * 4])).toBeLessThan(0.3);
+    }
+    sitPose(p);
+    skin(p, s);
+    for (let leg = 0; leg < 4; leg++) expect(gap(p.feet[leg * 4])).toBeLessThan(0.3);
+  });
+
+  it('is a shape at every moment of the pounce, and never goes through the floor', () => {
+    for (let t = 0; t < POUNCE.settled + 0.2; t += 0.01) {
+      pouncePose(p, t, 20, 2);
+      skin(p, s);
+      expect(s.discs.every(Number.isFinite)).toBe(true);
+      expect(s.polys.every((q) => q.every(Number.isFinite))).toBe(true);
+      for (let i = 0; i < s.discs.length; i += 3) expect(s.discs[i + 1] - s.discs[i + 2]).toBeGreaterThan(-1e-6);
     }
   });
 });

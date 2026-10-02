@@ -1,10 +1,11 @@
-// The cat, side-on and able to move: a small rig of bones, each carrying the
-// particles that were sampled inside its shape once. A particle belongs to one
-// bone for good, so the cat stays the same cat from frame to frame (nothing
-// shimmers); only the bones move. No DOM here: poses are plain maths, a pure
-// function of time.
+// The cat, side-on and able to move. A pose (spine, four feet, head, tail) is
+// turned into one solid silhouette: the body, the legs and the tail are swept
+// along smooth curves through the joints with a radius that tapers (so a leg is
+// one tapering limb, not a chain of capsules), and the skull and ears are
+// closed spline outlines. No DOM here: poses are plain maths, a pure function
+// of time; cat.ts puts the shape on a canvas.
 //
-// Rig units: the back is about 39 high, the cat faces +x, y is up, the ground is y = 0.
+// Rig units: the back is about 32 high, the cat faces +x, y is up, the ground is y = 0.
 // Why it reads as a walk and not as a slide:
 //   - a lateral-sequence walk, four beats: near hind, near fore, far hind, far fore,
 //     a quarter of a stride apart, each foot on the ground 62% of the time;
@@ -13,57 +14,37 @@
 //   - shoulders and hips rise over each planted leg and dip between steps, in
 //     opposite phase, so the back rocks; the head stays level; the tail lags.
 
-import { E, P, cl, lerp, mulberry32 } from './draw';
+import { E, P, cl, lerp } from './draw';
 
-const TORSO = 34;
-const UPPER = 12.5;
+const UPPER = 8.5;
 const FORE = 12.5;
-const FPAW = 5.2;
-const THIGH = 14.5;
-const SHANK = 14.5;
-const META = 10;
-const HPAW = 4;
-const NECK = 9;
-const HEAD = 10;
-const TAIL = 6;
-const TAIL_SEG = 6.5;
-/** Height of a planted paw's centre line. */
-const GROUND = 1.8;
+const FPAW = 3.2;
+const THIGH = 9;
+const SHANK = 10;
+const META = 7;
+const HPAW = 2.7;
+const TAIL = 7;
+const TAIL_SEG = 5.6;
+/** Height of the spine at the hips and shoulders when it stands. */
+const BACK = 26;
+/** Half the distance between hips and shoulders. */
+const HALF = 12.5;
 
 /** Legs, in the order the feet are stored: far hind, far fore, near hind, near fore. */
 const HIND = [true, false, true, false];
-const LEG_BONE = [3 + TAIL, 7 + TAIL, 10 + TAIL, 14 + TAIL];
-export const BONES = 17 + TAIL;
-const HEAD_BONE = 2;
 
-export const STRIDE = 34;
+export const STRIDE = 30;
 export const DUTY = 0.62;
 /** When each foot lands, as a fraction of the stride. */
 const PHASE = [0.5, 0.75, 0, 0.25];
 /** Where a foot is under the body at mid-stance. */
-const NEUTRAL = [-16, 15.5, -16, 15.5];
-const TAIL_UP = [2.62, 2.23, 1.88, 1.64, 1.43, 1.08];
-const TAIL_SAT = [2.9, 2.45, 1.95, 1.5, 1.2, 1.6];
-const TAIL_LOW = [3.35, 3.2, 2.9, 2.4, 1.9, 1.5];
-
-export interface Rig {
-  n: number;
-  /** Distance between two neighbouring particles, in rig units. */
-  step: number;
-  bone: Uint8Array;
-  /** Along the bone, as a fraction of its rest length (so it follows a bone that stretches). */
-  u: Float32Array;
-  /** Across the bone, in rig units, positive to the left of its direction. */
-  v: Float32Array;
-  /** 1 for the near side, less for the legs on the far side. */
-  shade: Float32Array;
-  /** Head particles only: where they sit when the head faces the camera, from the head's centre. */
-  fx: Float32Array;
-  fy: Float32Array;
-}
+const NEUTRAL = [-12.5, 11.5, -12.5, 11.5];
+const TAIL_UP = [2.75, 2.5, 2.25, 2.05, 1.95, 2.0, 2.2];
+const TAIL_SAT = [2.55, 2.2, 1.95, 1.8, 1.55, 1.05, 0.35];
+const TAIL_LOW = [3.3, 3.2, 3.0, 2.7, 2.35, 2.0, 1.7];
 
 export interface Pose {
-  /** The torso runs from the hips (hx, hy) to the shoulders (sx, sy); `bend` arches the back. */
+  /** The spine runs from the hips (hx, hy) to the shoulders (sx, sy); `bend` arches the back. */
   hx: number;
   hy: number;
   sx: number;
@@ -75,125 +56,178 @@ export interface Pose {
   headY: number;
   /** Head pitch, radians, nose up positive. */
   headA: number;
-  /** 0 = in profile, 1 = facing the camera. */
-  turn: number;
+  /** 1 = in profile, looking where it walks; 0 = facing the camera; -1 = in profile, looking back. */
+  yaw: number;
   /** Direction of each tail segment, root to tip. */
   tail: Float32Array;
 }
 
-export const newPose = (): Pose => ({ hx: 0, hy: 0, sx: 0, sy: 0, bend: 0, feet: new Float32Array(16), headX: 0, headY: 0, headA: 0, turn: 0, tail: new Float32Array(TAIL) });
+export const newPose = (): Pose => ({ hx: 0, hy: 0, sx: 0, sy: 0, bend: 0, feet: new Float32Array(16), headX: 0, headY: 0, headA: 0, yaw: 1, tail: new Float32Array(TAIL) });
 
-/* ------------------------------------------------------------------ shapes */
-
-type Inside = (x: number, y: number) => boolean;
-const ell = (x: number, y: number, cx: number, cy: number, rx: number, ry: number) => ((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2 <= 1;
-function tri(x: number, y: number, ax: number, ay: number, bx: number, by: number, cx: number, cy: number) {
-  const d1 = (x - bx) * (ay - by) - (ax - bx) * (y - by);
-  const d2 = (x - cx) * (by - cy) - (bx - cx) * (y - cy);
-  const d3 = (x - ax) * (cy - ay) - (cx - ax) * (y - ay);
-  return !((d1 < 0 || d2 < 0 || d3 < 0) && (d1 > 0 || d2 > 0 || d3 > 0));
+/** A silhouette, in rig units. */
+export interface Shape {
+  /** Discs (x, y, r), flat: the body, the legs and the tail are swept out of them. */
+  discs: number[];
+  /** Closed outlines (x, y, ...): the skull and the ears. */
+  polys: number[][];
+  /** Eyes (x, y, rx, ry, tilt), flat. */
+  eyes: number[];
 }
-/** A limb: a capsule from (0, 0) to (len, 0) whose radius tapers from r0 to r1. */
-const capsule = (len: number, r0: number, r1: number): Inside => (x, y) =>
-  x < 0 ? x * x + y * y <= r0 * r0 : x > len ? (x - len) ** 2 + y * y <= r1 * r1 : Math.abs(y) <= lerp(r0, r1, x / len);
+export const newShape = (): Shape => ({ discs: [], polys: [], eyes: [] });
 
-const torso: Inside = (x, y) => {
-  if (ell(x, y, 1.5, -0.8, 9.5, 8.6) || ell(x, y, 31.5, -1.6, 10, 9.6)) return true;
-  const k = (x - 1.5) / 30;
-  // The belly tucks up toward the hind legs.
-  return k >= 0 && k <= 1 && y <= lerp(7.8, 8, k) && y >= lerp(-8.4, -11.2, k);
-};
-const headSide: Inside = (x, y) =>
-  ell(x, y, 0, 0, 7.8, 7.2) || ell(x, y, 5.4, -2.6, 3.9, 3.3) || tri(x, y, -6.4, 3.2, -4.4, 13.6, 1.4, 6.2) || tri(x, y, -1.6, 5.8, 2.4, 12.8, 5.2, 4.4);
-const headFront: Inside = (x, y) => {
-  const ax = Math.abs(x);
-  if (tri(ax, y, 7.25, 4.5, 7, 9.25, 4, 6.5)) return false; // inside of the ear
-  return ell(x, y, 0, 0, 10.2, 8.2) || tri(ax, y, 9.75, 2, 9, 13.5, 1.25, 7.25);
-};
+/* ------------------------------------------------------------------- shape */
 
-interface Part {
-  bone: number;
-  rest: number;
-  shade: number;
-  box: [number, number, number, number];
-  inside: Inside;
+/**
+ * Sweeps a disc along a smooth curve through the keys (x, y, radius to the left of travel, radius to the right).
+ * The curve passes through every key; the radius eases from one to the next, so the limb tapers without a joint.
+ */
+function sweep(out: number[], k: number[]) {
+  const n = k.length / 4;
+  const tx: number[] = [];
+  const ty: number[] = [];
+  for (let i = 0; i < n; i++) {
+    // The tangent at a key bisects its two chords.
+    let ax = 0;
+    let ay = 0;
+    for (const j of [i - 1, i]) {
+      if (j < 0 || j >= n - 1) continue;
+      const dx = k[j * 4 + 4] - k[j * 4];
+      const dy = k[j * 4 + 5] - k[j * 4 + 1];
+      const d = Math.hypot(dx, dy) || 1;
+      ax += dx / d;
+      ay += dy / d;
+    }
+    const d = Math.hypot(ax, ay) || 1;
+    tx.push(ax / d);
+    ty.push(ay / d);
+  }
+  const slope = (o: number, i: number) => (k[Math.min(n - 1, i + 1) * 4 + o] - k[Math.max(0, i - 1) * 4 + o]) / 2;
+  for (let i = 0; i < n - 1; i++) {
+    const a = i * 4;
+    const b = a + 4;
+    const len = Math.hypot(k[b] - k[a], k[b + 1] - k[a + 1]);
+    const thin = Math.min(k[a + 2] + k[a + 3], k[b + 2] + k[b + 3]) / 2;
+    const steps = Math.max(2, Math.ceil(len / (0.1 * thin + 0.1)));
+    for (let j = 0; j <= (i === n - 2 ? steps : steps - 1); j++) {
+      const u = j / steps;
+      const u2 = u * u;
+      const u3 = u2 * u;
+      const h00 = 2 * u3 - 3 * u2 + 1;
+      const h10 = u3 - 2 * u2 + u;
+      const h01 = -2 * u3 + 3 * u2;
+      const h11 = u3 - u2;
+      const x = h00 * k[a] + h10 * len * tx[i] + h01 * k[b] + h11 * len * tx[i + 1];
+      const y = h00 * k[a + 1] + h10 * len * ty[i] + h01 * k[b + 1] + h11 * len * ty[i + 1];
+      const dx = (6 * u2 - 6 * u) * (k[a] - k[b]) + (3 * u2 - 4 * u + 1) * len * tx[i] + (3 * u2 - 2 * u) * len * tx[i + 1];
+      const dy = (6 * u2 - 6 * u) * (k[a + 1] - k[b + 1]) + (3 * u2 - 4 * u + 1) * len * ty[i] + (3 * u2 - 2 * u) * len * ty[i + 1];
+      const d = Math.hypot(dx, dy) || 1;
+      const rl = Math.max(0.2, h00 * k[a + 2] + h10 * slope(2, i) + h01 * k[b + 2] + h11 * slope(2, i + 1));
+      const rr = Math.max(0.2, h00 * k[a + 3] + h10 * slope(3, i) + h01 * k[b + 3] + h11 * slope(3, i + 1));
+      const off = (rl - rr) / 2;
+      out.push(x - (dy / d) * off, y + (dx / d) * off, (rl + rr) / 2);
+    }
+  }
 }
-function parts(): Part[] {
-  const limb = (bone: number, rest: number, r0: number, r1: number, shade: number): Part => {
-    const r = Math.max(r0, r1);
-    return { bone, rest, shade, box: [-r, rest + r, -r, r], inside: capsule(rest, r0, r1) };
-  };
-  const list: Part[] = [
-    { bone: 0, rest: TORSO, shade: 1, box: [-9, 42, -12, 9], inside: torso },
-    limb(1, NECK, 6.6, 5.6, 1),
-  ];
-  for (let i = 0; i < TAIL; i++) list.push(limb(3 + i, TAIL_SEG, lerp(2.7, 1.9, i / TAIL), lerp(2.7, 1.9, (i + 1) / TAIL), 1));
-  HIND.forEach((hind, leg) => {
-    const b = LEG_BONE[leg];
-    const shade = leg < 2 ? 0.5 : 1;
-    if (hind) list.push(limb(b, THIGH, 6.2, 3.3, shade), limb(b + 1, SHANK, 3.1, 2.1, shade), limb(b + 2, META, 2.1, 2, shade), limb(b + 3, HPAW, 2.3, 2.5, shade));
-    else list.push(limb(b, UPPER, 4, 2.9, shade), limb(b + 1, FORE, 2.8, 2.1, shade), limb(b + 2, FPAW, 2.1, 2.6, shade));
-  });
-  return list;
-}
 
-function fill(step: number, box: [number, number, number, number], inside: Inside) {
-  const out: number[][] = [];
-  for (let row = 0, y = box[2]; y <= box[3]; y += step * 0.866, row++) {
-    for (let x = box[0] + (row % 2 ? step / 2 : 0); x <= box[1]; x += step) if (inside(x, y)) out.push([x, y]);
+/** A closed smooth outline through the points (x, y, ...), as a polygon. */
+function contour(pts: number[], per = 6): number[] {
+  const n = pts.length / 2;
+  const out: number[] = [];
+  const at = (i: number, o: number) => pts[(((i % n) + n) % n) * 2 + o];
+  for (let i = 0; i < n; i++) {
+    for (let j = 0; j < per; j++) {
+      const u = j / per;
+      const u2 = u * u;
+      const u3 = u2 * u;
+      for (let o = 0; o < 2; o++) {
+        out.push(0.5 * (2 * at(i, o) + (at(i + 1, o) - at(i - 1, o)) * u + (2 * at(i - 1, o) - 5 * at(i, o) + 4 * at(i + 1, o) - at(i + 2, o)) * u2 + (3 * at(i, o) - at(i - 1, o) - 3 * at(i + 1, o) + at(i + 2, o)) * u3));
+      }
+    }
   }
   return out;
 }
 
-/** Samples every bone's shape into about `count` particles, in a shuffled order (any prefix covers the whole cat). */
-export function buildRig(count: number): Rig {
-  const list = parts();
-  const collect = (step: number) => {
-    const rows: number[][] = []; // bone, u, v, shade, fx, fy
-    for (const p of list) for (const [x, y] of fill(step, p.box, p.inside)) rows.push([p.bone, x / p.rest, y, p.shade, NaN, NaN]);
-    // The head has two views; a particle keeps its rank (top to bottom, left to right) in both.
-    const side = fill(step, [-8, 11, -7, 14], headSide);
-    const front = fill(step, [-11, 11, -9, 14], headFront);
-    front.forEach(([x, y], j) => {
-      const s = side[Math.floor((j * side.length) / front.length)];
-      rows.push([HEAD_BONE, s[0] / HEAD, s[1], 1, x, y]);
-    });
-    return rows;
-  };
-  const rough = collect(1);
-  const step = Math.sqrt(rough.length / Math.max(1, count));
-  const rows = collect(step);
-  const rnd = mulberry32(11);
-  for (let i = rows.length - 1; i > 0; i--) {
-    const j = Math.floor(rnd() * (i + 1));
-    [rows[i], rows[j]] = [rows[j], rows[i]];
+// The skull, clockwise from the crown, in profile (nose toward +x) and from the front. Same points, so one becomes the other.
+const SKULL_SIDE = [0.6, 4.9, 3.0, 4.2, 4.6, 2.9, 5.6, 1.4, 6.3, 0.1, 6.0, -1.6, 4.8, -3.0, 2.2, -3.9, -0.4, -4.3, -2.6, -4.0, -4.2, -2.9, -5.0, -1.2, -5.1, 0.8, -4.4, 2.7, -3.0, 4.0, -1.2, 4.8];
+const SKULL_FRONT = [0, 4.7, 2.6, 4.35, 4.6, 2.9, 5.5, 0.9, 5.6, -0.9, 4.9, -2.6, 3.2, -3.8, 1.4, -4.3, 0, -4.4, -1.4, -4.3, -3.2, -3.8, -4.9, -2.6, -5.6, -0.9, -5.5, 0.9, -4.6, 2.9, -2.6, 4.35];
+// Ears: outer base, tip, inner base. In profile the far one shows just ahead of the near one.
+const EARS_SIDE = [
+  [-4.0, 2.2, -2.9, 8.2, -0.1, 4.5],
+  [-1.6, 3.8, -0.3, 7.8, 1.9, 4.2],
+];
+const EARS_FRONT = [
+  [-4.9, 2.2, -4.3, 8.4, -1.2, 4.4],
+  [1.2, 4.4, 4.3, 8.4, 4.9, 2.2],
+];
+
+/**
+ * The head: skull and ears as outlines, and its eyes. (x, y) is the middle of the skull, `pitch` lifts the nose,
+ * `yaw` turns it (1 profile, 0 at the camera, -1 profile the other way), `k` is its size.
+ */
+export function head(s: Shape, x: number, y: number, pitch: number, yaw: number, k = 1) {
+  const side = Math.abs(yaw);
+  const flip = yaw < 0 ? -1 : 1;
+  // The pitch fades as the head comes round, so it never jumps when the nose crosses the middle.
+  const c = Math.cos(pitch * yaw);
+  const sn = Math.sin(pitch * yaw);
+  const put = (out: number[], lx: number, ly: number) => out.push(x + (lx * flip * c - ly * sn) * k, y + (lx * flip * sn + ly * c) * k);
+  const skull: number[] = [];
+  for (let i = 0; i < SKULL_SIDE.length; i += 2) put(skull, lerp(SKULL_FRONT[i], SKULL_SIDE[i], side), lerp(SKULL_FRONT[i + 1], SKULL_SIDE[i + 1], side));
+  s.polys.push(contour(skull));
+  for (let e = 0; e < 2; e++) {
+    const q = EARS_FRONT[e].map((v, i) => lerp(v, EARS_SIDE[e][i], side));
+    const ear: number[] = [];
+    // Two sides, each bowed a little outward; the tip stays sharp.
+    for (const [a, b, bow] of [
+      [0, 2, 0.5],
+      [2, 4, 0.35],
+    ]) {
+      const nx = -(q[b + 1] - q[a + 1]);
+      const ny = q[b] - q[a];
+      const d = Math.hypot(nx, ny) || 1;
+      for (let j = 0; j < 6; j++) {
+        const u = j / 6;
+        const w = 4 * u * (1 - u) * bow;
+        put(ear, lerp(q[a], q[b], u) + (nx / d) * w, lerp(q[a + 1], q[b + 1], u) + (ny / d) * w);
+      }
+    }
+    put(ear, q[4], q[5]);
+    put(ear, (q[0] + q[4]) / 2, (q[1] + q[5]) / 2 - 2.5);
+    s.polys.push(ear);
   }
-  const n = rows.length;
-  const rig: Rig = { n, step, bone: new Uint8Array(n), u: new Float32Array(n), v: new Float32Array(n), shade: new Float32Array(n), fx: new Float32Array(n), fy: new Float32Array(n) };
-  rows.forEach((r, i) => {
-    rig.bone[i] = r[0];
-    rig.u[i] = r[1];
-    rig.v[i] = r[2];
-    rig.shade[i] = r[3];
-    rig.fx[i] = r[4];
-    rig.fy[i] = r[5];
-  });
-  return rig;
+  // Eyes: two from the front; in profile only the near one is left.
+  const depth = Math.sqrt(1 - side * side);
+  for (const lat of [-1, 1]) {
+    const seen = cl(1 - (lat * yaw * flip < 0 ? 0 : (side - 0.15) / 0.45));
+    if (seen <= 0) continue;
+    const ex = lat * 2.35 * depth * flip + 3.1 * side;
+    const o: number[] = [];
+    put(o, ex, lerp(0.35, 1.05, side));
+    s.eyes.push(o[0], o[1], k * seen * lerp(1.2, 0.95, side), lerp(0.85, 0.5, side) * k, pitch * yaw + flip * lerp(lat * -0.25, 0.3, side));
+  }
 }
 
-/* ------------------------------------------------------------------- bones */
-
-function setBone(B: Float32Array, i: number, ax: number, ay: number, bx: number, by: number, bend = 0) {
-  B[i * 5] = ax;
-  B[i * 5 + 1] = ay;
-  B[i * 5 + 2] = bx;
-  B[i * 5 + 3] = by;
-  B[i * 5 + 4] = bend;
+/** Head and shoulders from the front, for a cat that looks over an edge: (x, y) is the middle of the skull. */
+export function bust(s: Shape, x: number, y: number, k: number) {
+  s.discs.length = 0;
+  s.polys.length = 0;
+  s.eyes.length = 0;
+  const neck: number[] = [];
+  for (const [dy, r] of [
+    [2, 4.5],
+    [6, 5],
+    [11, 6],
+    [18, 6.6],
+    [26, 6.8],
+  ]) {
+    neck.push(x, y - dy * k, r * k, r * k);
+  }
+  sweep(s.discs, neck);
+  head(s, x, y, 0, 0, k);
 }
 
-/** Two bones from the root toward the target; `side` picks which way the joint bends (+1 = left of the line). Writes both bones, returns the reached end in `end`. */
-const end = [0, 0];
-function ik(B: Float32Array, i: number, rx: number, ry: number, tx: number, ty: number, a: number, b: number, side: number) {
+/** Two bones from the root toward the target; `side` picks which way the joint bends (+1 = left of the line). Returns the joint and the reached end. */
+function ik(rx: number, ry: number, tx: number, ty: number, a: number, b: number, side: number) {
   let dx = tx - rx;
   let dy = ty - ry;
   const far = Math.hypot(dx, dy) || 1e-6;
@@ -202,75 +236,95 @@ function ik(B: Float32Array, i: number, rx: number, ry: number, tx: number, ty: 
   dy /= far;
   const along = (a * a - b * b + d * d) / (2 * d);
   const off = Math.sqrt(Math.max(0, a * a - along * along)) * side;
-  const jx = rx + dx * along - dy * off;
-  const jy = ry + dy * along + dx * off;
-  end[0] = rx + dx * d;
-  end[1] = ry + dy * d;
-  setBone(B, i, rx, ry, jx, jy);
-  setBone(B, i + 1, jx, jy, end[0], end[1]);
+  return [rx + dx * along - dy * off, ry + dy * along + dx * off, rx + dx * d, ry + dy * d];
 }
 
-/** Turns a pose into bones (ax, ay, bx, by, bend per bone). */
-export function solve(p: Pose, B: Float32Array) {
+/** Turns a pose into its silhouette. */
+export function skin(p: Pose, s: Shape) {
+  s.discs.length = 0;
+  s.polys.length = 0;
+  s.eyes.length = 0;
   const len = Math.hypot(p.sx - p.hx, p.sy - p.hy) || 1;
   const dx = (p.sx - p.hx) / len;
   const dy = (p.sy - p.hy) / len;
   const at = (ox: number, oy: number, along: number, up: number) => [ox + dx * along - dy * up, oy + dy * along + dx * up];
-  setBone(B, 0, p.hx, p.hy, p.sx, p.sy, p.bend);
-  const neck = at(p.sx, p.sy, 2.5, 2.5);
-  setBone(B, 1, neck[0], neck[1], p.headX - Math.cos(p.headA) * 2, p.headY - Math.sin(p.headA) * 2);
-  setBone(B, HEAD_BONE, p.headX, p.headY, p.headX + Math.cos(p.headA) * HEAD, p.headY + Math.sin(p.headA) * HEAD);
-  let [x, y] = at(p.hx, p.hy, -8, 2.5);
-  for (let i = 0; i < TAIL; i++) {
-    const nx = x + Math.cos(p.tail[i]) * TAIL_SEG;
-    const ny = y + Math.sin(p.tail[i]) * TAIL_SEG;
-    setBone(B, 3 + i, x, y, nx, ny);
-    x = nx;
-    y = ny;
-  }
-  const hip = at(p.hx, p.hy, 3.5, -2);
-  const shoulder = at(p.sx, p.sy, -3, -2.5);
+  const mid = (a: number[], b: number[], k: number) => [lerp(a[0], b[0], k), lerp(a[1], b[1], k)];
+  const key = (list: number[], q: number[], rl: number, rr = rl) => list.push(q[0], q[1], rl, rr);
+
   for (let leg = 0; leg < 4; leg++) {
-    const b = LEG_BONE[leg];
+    // The far pair hangs a little ahead of the near pair, so two legs side by side leave a sliver between them.
+    const far = leg < 2 ? 1 : 0;
     const fx = p.feet[leg * 4];
-    const fy = p.feet[leg * 4 + 1] + GROUND;
+    // The joint a leg hangs from gives a little toward its foot, the way a shoulder blade slides.
+    const hip = at(p.hx, p.hy, -0.5 + far, -1.5);
+    hip[0] += 0.15 * cl(fx - hip[0], -12, 12);
+    const shoulder = at(p.sx, p.sy, -0.5 + 1.6 * far, -4.5);
+    shoulder[0] += 0.3 * cl(fx - shoulder[0], -12, 12);
+    const fy = p.feet[leg * 4 + 1];
     const a = p.feet[leg * 4 + 2];
+    const k: number[] = [];
     if (HIND[leg]) {
       // Thigh forward, shank back, then the long foot: the Z of a cat's hind leg.
-      ik(B, b, hip[0], hip[1], fx - Math.sin(a) * META, fy + Math.cos(a) * META, THIGH, SHANK, 1);
-      const droop = p.feet[leg * 4 + 3];
+      const j = ik(hip[0], hip[1], fx - Math.sin(a) * META, fy + 1.4 + Math.cos(a) * META, THIGH, SHANK, 1);
+      const knee = [j[0], j[1]];
+      const hock = [j[2], j[3]];
       // If the leg cannot reach, the foot hangs from the hock instead of stretching.
-      const bx = end[0] + Math.sin(a) * META;
-      const by = end[1] - Math.cos(a) * META;
-      setBone(B, b + 2, end[0], end[1], bx, by);
-      setBone(B, b + 3, bx, by, bx + Math.cos(droop) * HPAW, by + Math.sin(droop) * HPAW);
+      const toe = [hock[0] + Math.sin(a) * META, hock[1] - Math.cos(a) * META];
+      const droop = p.feet[leg * 4 + 3];
+      // A folded leg bunches up: sitting, thigh and shank are one rounded haunch.
+      const fold = cl((1 - Math.hypot(hock[0] - hip[0], hock[1] - hip[1]) / (THIGH + SHANK) - 0.2) / 0.3);
+      key(k, hip, 6 + 1.6 * fold);
+      key(k, mid(hip, knee, 0.5), 4.9 + 3 * fold);
+      key(k, knee, 3.2 + 3.4 * fold);
+      key(k, mid(knee, hock, 0.5), 2.2 + 1.6 * fold);
+      key(k, mid(knee, hock, 0.82), 1.7 + 0.6 * fold);
+      key(k, hock, 1.5);
+      key(k, mid(hock, toe, 0.3), 1.35);
+      key(k, toe, 1.3);
+      key(k, [toe[0] + Math.cos(droop) * HPAW, toe[1] + Math.sin(droop) * HPAW], 1.5);
     } else {
-      ik(B, b, shoulder[0], shoulder[1], fx - 1.5, fy + 3.3, UPPER, FORE, -1);
-      setBone(B, b + 2, end[0], end[1], end[0] + Math.sin(a) * FPAW, end[1] - Math.cos(a) * FPAW);
+      const px = Math.sin(a) * FPAW;
+      const py = Math.cos(a) * FPAW;
+      const j = ik(shoulder[0], shoulder[1], fx - px, fy + 1.55 + py, UPPER, FORE, -1);
+      const elbow = [j[0], j[1]];
+      const wrist = [j[2], j[3]];
+      key(k, shoulder, 3.9);
+      key(k, elbow, 2.9);
+      key(k, mid(elbow, wrist, 0.5), 1.8);
+      key(k, wrist, 1.4);
+      key(k, [wrist[0] + px, wrist[1] - py], 1.5);
     }
+    sweep(s.discs, k);
   }
-}
 
-/** Where particle i is, in rig units. Writes [x, y]. */
-export function rigPoint(rig: Rig, B: Float32Array, p: Pose, i: number, out: number[]) {
-  const b = rig.bone[i] * 5;
-  const ax = B[b];
-  const ay = B[b + 1];
-  const dx = B[b + 2] - ax;
-  const dy = B[b + 3] - ay;
-  const len = Math.hypot(dx, dy) || 1;
-  const u = rig.u[i];
-  const v = rig.v[i] + (B[b + 4] ? B[b + 4] * Math.sin(Math.PI * cl(u)) : 0);
-  let x = ax + dx * u - (dy / len) * v;
-  let y = ay + dy * u + (dx / len) * v;
-  if (p.turn > 0 && rig.fx[i] === rig.fx[i]) {
-    // The head comes round: it narrows halfway through, like anything that turns.
-    x = lerp(x, p.headX + rig.fx[i], p.turn);
-    y = lerp(y, p.headY + rig.fy[i], p.turn);
-    x = p.headX + (x - p.headX) * (1 - 0.3 * Math.sin(Math.PI * p.turn));
+  // Rump to skull in one sweep: the back is the left side of the curve, the belly and chest the right.
+  const body: number[] = [];
+  const neck = at(p.sx, p.sy, 5, 1.5);
+  const skull = [p.headX, p.headY];
+  key(body, at(p.hx, p.hy, -3, 0.3), 3.7, 3.7);
+  key(body, at(p.hx, p.hy, -1, 0), 5.4, 5.6);
+  key(body, at(lerp(p.hx, p.sx, 0.33), lerp(p.hy, p.sy, 0.33), 0, p.bend), 4.8, 4.2);
+  key(body, at(lerp(p.hx, p.sx, 0.68), lerp(p.hy, p.sy, 0.68), 0, p.bend), 5.1, 6.6);
+  key(body, [p.sx, p.sy], 6.1, 8);
+  key(body, neck, 4.2, 6.7);
+  key(body, mid(neck, skull, 0.5), 3.3, 3.3);
+  key(body, [p.headX - 1.3 * p.yaw, p.headY + 0.2], 5.3, 3.5);
+  sweep(s.discs, body);
+
+  const tail: number[] = [];
+  let q = at(p.hx, p.hy, -6.5, 2.4);
+  key(tail, at(p.hx, p.hy, -2, 1), 2.6);
+  key(tail, q, 1.7);
+  for (let i = 0; i < TAIL; i++) {
+    q = [q[0] + Math.cos(p.tail[i]) * TAIL_SEG, q[1] + Math.sin(p.tail[i]) * TAIL_SEG];
+    key(tail, q, lerp(1.6, 0.8, (i + 1) / TAIL));
   }
-  out[0] = x;
-  out[1] = y;
+  sweep(s.discs, tail);
+
+  // Nothing goes through the floor: what would is flattened against it.
+  for (let i = 0; i < s.discs.length; i += 3) s.discs[i + 1] = Math.max(s.discs[i + 1], s.discs[i + 2]);
+
+  head(s, p.headX, p.headY, p.headA, p.yaw, 1.2);
 }
 
 /* ------------------------------------------------------------------- poses */
@@ -302,22 +356,44 @@ export function walkFoot(s: number, leg: number, lift: number, feet: Float32Arra
   feet[o] = landed + STRIDE * smooth(u);
   feet[o + 1] = (HIND[leg] ? 3.6 : 4.6) * up;
   // In the air the hind foot trails and the fore paw folds back at the wrist.
-  feet[o + 2] = HIND[leg] ? lerp(0.12, 0.55, u) + 0.6 * up : 0.87 - 1.5 * up;
-  feet[o + 3] = HIND[leg] ? -0.9 * up : 0;
+  feet[o + 2] = HIND[leg] ? lerp(0.12, 0.55, u) + 0.6 * up : 0.87 - 0.45 * up;
+  feet[o + 3] = HIND[leg] ? -0.5 * up : 0;
 }
 
-/** Seconds the walk-in takes, the settle into a sit, and the look at the camera. */
-export const WALK = { stride: 1.5, sitAt: 1.46, sat: 1.9, turnAt: 1.82, turned: 2.02 };
-/** How far it walks: two and a quarter strides, then the sit shifts it back a little. */
-const WALK_DIST = STRIDE * 2.25;
+/** Sitting: where the spine, the head and the feet (far hind, far fore, near hind, near fore) are. x = 0 is where it sits. */
+const SIT = { hx: -11, hy: 6.5, sx: 5, sy: 26.5, bend: 3.2, headX: 7.5, headY: 39, feet: [1.4, 13.4, 0, 10.4] };
+
+/** The cat sitting still. `swing` bends the tail (radians at its tip), `yaw` turns the head. */
+export function sitPose(p: Pose, swing = 0, yaw = -1) {
+  p.hx = SIT.hx;
+  p.hy = SIT.hy;
+  p.sx = SIT.sx;
+  p.sy = SIT.sy;
+  p.bend = SIT.bend;
+  p.headX = SIT.headX - 0.6 * (1 - yaw);
+  p.headY = SIT.headY;
+  p.headA = 0.1;
+  p.yaw = yaw;
+  for (let leg = 0; leg < 4; leg++) {
+    p.feet[leg * 4] = SIT.feet[leg];
+    p.feet[leg * 4 + 1] = 0;
+    p.feet[leg * 4 + 2] = HIND[leg] ? 1.45 : 0.87;
+    p.feet[leg * 4 + 3] = 0;
+  }
+  for (let i = 0; i < TAIL; i++) p.tail[i] = TAIL_SAT[i] - swing * Math.pow((i + 1) / TAIL, 1.5);
+}
+
+/** Seconds the walk-in takes, the settle into a sit, and the look back. */
+export const WALK = { stride: 1.5, sitAt: 1.46, sat: 1.9, turnAt: 1.8, turned: 2.08 };
+/** How far it walks: two and three quarter strides, then the sit shifts it back a little. */
+const WALK_DIST = STRIDE * 2.75;
 const SIT_BACK = 6;
-/** Where the feet end up when it sits (far hind, far fore, near hind, near fore) and when each one steps there. */
-const SIT_FEET = [1.4, 13.6, 2.8, 12];
+/** When each foot steps to its place as it sits. */
 const SIT_STEP = [0, 0.5, 0.14, 0.26];
 
 /**
  * The walk variant, `t` seconds after the cat enters. It walks in from the left, slows and stops,
- * shuffles its feet under itself and sits, then turns its head to the camera. x = 0 is where it sits.
+ * shuffles its feet under itself and sits, then turns its head to look back. x = 0 is where it sits.
  */
 export function walkPose(p: Pose, t: number) {
   // Steady pace, then a smooth stop.
@@ -337,7 +413,7 @@ export function walkPose(p: Pose, t: number) {
     p.feet[o] += x0;
     // Sitting down: each foot takes one short step to its place, one after the other.
     const k = smooth(P(sit, SIT_STEP[leg], SIT_STEP[leg] + 0.42));
-    p.feet[o] = lerp(p.feet[o], SIT_FEET[leg], k);
+    p.feet[o] = lerp(p.feet[o], SIT.feet[leg], k);
     p.feet[o + 1] += Math.sin(Math.PI * k) * 2.2;
     p.feet[o + 2] = lerp(p.feet[o + 2], HIND[leg] ? 1.45 : 0.87, HIND[leg] ? q : k);
     p.feet[o + 3] = lerp(p.feet[o + 3], 0, q);
@@ -348,85 +424,141 @@ export function walkPose(p: Pose, t: number) {
   const hipBob = 0.9 * bob * Math.cos(4 * Math.PI * (ph - DUTY / 2));
   const shBob = 0.9 * bob * Math.cos(4 * Math.PI * (ph + 0.25 - DUTY / 2));
   const c = s + x0;
-  p.hx = lerp(c - 17, -13, q);
-  p.hy = lerp(31 + hipBob, 10, E.inOutCubic(P(sit, 0.1, 0.8)));
-  p.sx = lerp(c + 17, 8.5, q);
-  p.sy = lerp(31 + shBob, 33.5, q);
-  p.bend = 3.4 * q;
+  p.hx = lerp(c - HALF, SIT.hx, q);
+  p.hy = lerp(BACK + hipBob, SIT.hy, E.inOutCubic(P(sit, 0.1, 0.8)));
+  p.sx = lerp(c + HALF, SIT.sx, q);
+  p.sy = lerp(BACK + shBob, SIT.sy, q);
+  p.bend = SIT.bend * q;
 
-  // The head is carried level (it takes a third of the shoulders' bob) and nods slightly behind the beat.
+  // The head is carried level and a little low (it takes a third of the shoulders' bob) and nods slightly behind the beat.
   const turn = E.inOutCubic(P(t, WALK.turnAt, WALK.turned));
-  p.headX = lerp(c + 30.5, 13, q) - 1.2 * turn;
-  p.headY = lerp(40 + shBob * 0.35, 44.5, q) - 1.5 * Math.sin(Math.PI * sit);
-  p.headA = lerp(-0.1 + 0.05 * bob * Math.sin(4 * Math.PI * ph - 0.9), 0.04, q) * (1 - turn);
-  p.turn = turn;
+  p.yaw = 1 - 2 * turn;
+  p.headX = lerp(c + HALF + 11, SIT.headX - 0.6 * (1 - p.yaw), q);
+  p.headY = lerp(32 + shBob * 0.35, SIT.headY, q) - 1.5 * Math.sin(Math.PI * sit);
+  p.headA = lerp(-0.14 + 0.05 * bob * Math.sin(4 * Math.PI * ph - 0.9), 0.1, q);
 
   // The tail is carried up, and a wave runs along it a little behind the stride; sitting, it curls behind and flicks.
   const flick = Math.exp(-(((t - WALK.sat - 0.22) / 0.09) ** 2));
   for (let i = 0; i < TAIL; i++) {
     const wave = (0.05 + 0.035 * i) * Math.sin(2 * Math.PI * ph - i * 0.75) * bob;
-    p.tail[i] = lerp(TAIL_UP[i] + wave, TAIL_SAT[i] - 0.11 * i * flick, q);
+    p.tail[i] = lerp(TAIL_UP[i] + wave, TAIL_SAT[i] - 0.09 * i * flick, q);
   }
 }
 
-/** Seconds: the crouch and wiggle, the leap, and where the leap lands (rig x of the body). */
-export const POUNCE = { crouch: 0.35, wiggleAt: 0.9, leapAt: 1.72, land: 2.1, from: -40, to: 2 };
+/**
+ * A value keyed in time (t0, v0, t1, v1, ...), eased through its keys without overshooting:
+ * between two equal keys it does not move at all, which is what keeps a planted foot planted.
+ */
+function track(t: number, ...k: number[]) {
+  const n = k.length / 2;
+  if (t <= k[0]) return k[1];
+  if (t >= k[n * 2 - 2]) return k[n * 2 - 1];
+  let i = 0;
+  while (t >= k[i * 2 + 2]) i++;
+  const sec = (j: number) => (j < 0 || j >= n - 1 ? 0 : (k[j * 2 + 3] - k[j * 2 + 1]) / (k[j * 2 + 2] - k[j * 2]));
+  const slope = (j: number) => {
+    const a = sec(j - 1);
+    const b = sec(j);
+    return a * b <= 0 ? 0 : (2 * a * b) / (a + b);
+  };
+  const h = k[i * 2 + 2] - k[i * 2];
+  const u = (t - k[i * 2]) / h;
+  const u2 = u * u;
+  const u3 = u2 * u;
+  return (2 * u3 - 3 * u2 + 1) * k[i * 2 + 1] + (u3 - 2 * u2 + u) * h * slope(i) + (-2 * u3 + 3 * u2) * k[i * 2 + 3] + (u3 - u2) * h * slope(i + 1);
+}
+
+/** Seconds: the crouch, the wiggle, the squeeze before the leap, the leap, the landing and its squash; and where it starts and lands (rig x of the body). */
+export const POUNCE = { crouch: 0.35, wiggleAt: 0.75, coilAt: 1.34, leapAt: 1.5, land: 1.86, squash: 1.96, settled: 2.1, from: -34, to: 4 };
+const TAIL_LANDED = [2.95, 2.75, 2.5, 2.25, 2.05, 1.95, 2.0];
 
 /**
- * The pounce variant: crouched, watching the dot at (dotX, dotY); a wiggle of the hips; the leap.
- * x = 0 is the middle of the frame, where the dot ends up and the cat lands on it.
+ * The pounce variant: crouched low with its rear up, watching the dot at (dotX, dotY); the hind-quarters wiggle;
+ * it squeezes down and goes, stretched out in the air; the forepaws land first and the body squashes over them.
+ * x = 0 is the middle of the frame.
  */
 export function pouncePose(p: Pose, t: number, dotX: number, dotY: number) {
-  const down = E.outCubic(P(t, 0, POUNCE.crouch));
-  const wig = P(t, POUNCE.wiggleAt, POUNCE.wiggleAt + 0.15) * (1 - P(t, POUNCE.leapAt - 0.14, POUNCE.leapAt - 0.04));
-  const coil = E.inOutCubic(P(t, POUNCE.leapAt - 0.16, POUNCE.leapAt)); // the last squeeze before it goes
-  const air = P(t, POUNCE.leapAt, POUNCE.land);
-  const fly = smooth(air);
-  const arc = Math.sin(Math.PI * air);
-  const w = Math.sin(t * 38) * wig;
-  const c = lerp(POUNCE.from - 2.5 * coil, POUNCE.to, fly);
-  const lift = 19 * arc;
-  // Nose up on the way up, nose down on the way down.
-  const pitch = 0.5 * Math.cos(Math.PI * air) * arc + 0.1 * arc;
-  const half = lerp(17, 15, down) + 3 * arc;
-  const midY = lerp(27, 16.5, down) - 1.5 * coil + lift + 4 * arc;
-  p.hx = c - Math.cos(pitch) * half - 1.5 * coil;
-  p.hy = midY - Math.sin(pitch) * half + 3.5 * down * (1 - arc) + 0.9 * w;
-  p.sx = c + Math.cos(pitch) * half;
-  p.sy = midY + Math.sin(pitch) * half - 2 * down * (1 - arc);
-  p.bend = 2 * down * (1 - arc) + 2.5 * coil * (1 - air);
+  const { crouch, wiggleAt, coilAt, leapAt: a, land, squash, settled, from: F, to: L } = POUNCE;
+  const air = land - a;
+  const u = P(t, a, land);
+  const wig = P(t, wiggleAt, wiggleAt + 0.12) * (1 - P(t, coilAt - 0.08, coilAt));
+  const w = Math.sin(t * 36) * wig;
+
+  const c = track(t, 0, F, coilAt, F, a, F - 3, land, L - 1.5, squash, L + 0.8, settled, L);
+  const hy = track(t, 0, 22, crouch, 15.5, wiggleAt, 15.5, wiggleAt + 0.15, 19.5, coilAt, 19.5, a, 14, a + 0.2 * air, 22, a + 0.5 * air, 36, a + 0.8 * air, 33, land, 23, squash, 13, settled, 17) + 1.5 * w;
+  const sy = track(t, 0, 20, crouch, 12, wiggleAt + 0.15, 10.5, coilAt, 10.5, a, 11.5, a + 0.2 * air, 29, a + 0.5 * air, 37, a + 0.8 * air, 26, land, 14, squash, 9.5, settled, 11);
+  const half = track(t, 0, 12.5, crouch, 12, coilAt, 12, a, 11, a + 0.25 * air, 14, a + 0.5 * air, 15, a + 0.8 * air, 14.5, land, 13.5, squash, 10.5, settled, 12);
+  const reach = Math.sqrt(Math.max(4, half * half - ((sy - hy) / 2) ** 2));
+  p.hx = c - reach + 0.9 * w;
+  p.hy = hy;
+  p.sx = c + reach;
+  p.sy = sy;
+  p.bend = track(t, 0, 0, crouch, 1.5, coilAt, 1, a, 3.2, a + 0.25 * air, 0.5, a + 0.55 * air, 2.4, land, 1, squash, 3.6, settled, 1.5);
 
   for (let leg = 0; leg < 4; leg++) {
     const o = leg * 4;
     const far = leg < 2 ? 1.4 : 0;
     if (HIND[leg]) {
-      // Treading on the spot while it wiggles; left behind and stretched in the air, then swung under for the landing.
+      // Treading on the spot while it wiggles; they push off, trail stretched out behind, and swing under for the landing.
       const tread = Math.max(0, leg < 2 ? w : -w);
-      p.feet[o] = lerp(POUNCE.from - 13 + far, c - 26 + 20 * P(air, 0.55, 1), P(air, 0.12, 0.3));
-      p.feet[o + 1] = 1.6 * tread + lift * P(air, 0.12, 0.4) + 6 * arc;
-      p.feet[o + 2] = lerp(lerp(0.55, 1.1, down), 0.3, P(air, 0.05, 0.3)) + 1.1 * arc;
-      p.feet[o + 3] = -1.1 * arc;
+      const trail = c + track(u, 0.1, -half - 9, 0.45, -half - 26, 0.8, -half - 20, 1, -10);
+      const x = lerp(F - 12 + far, trail, smooth(P(u, 0.1, 0.3)));
+      p.feet[o] = lerp(x, L - 8 + far, smooth(P(t, land - 0.05, squash - 0.02)));
+      p.feet[o + 1] = 1.5 * tread + track(t, a + 0.1 * air, 0, a + 0.3 * air, 13, a + 0.5 * air, 28, a + 0.8 * air, 25, land, 9, squash - 0.02, 0);
+      p.feet[o + 2] = track(t, 0, 0.5, crouch, 1, a, 1, a + 0.1 * air, 0.1, a + 0.45 * air, -1.2, a + 0.8 * air, -0.5, land, 0.5, squash, 1.05);
+      p.feet[o + 3] = track(t, a + 0.1 * air, 0, a + 0.45 * air, -2.6, a + 0.8 * air, -1.6, squash - 0.02, 0);
     } else {
       // The forelegs reach for the dot and get there first.
-      p.feet[o] = lerp(POUNCE.from + 17 + far, c + 22 - 12 * P(air, 0.75, 1), P(air, 0, 0.2));
-      p.feet[o + 1] = lift * P(air, 0, 0.25) * (1 - P(air, 0.8, 1)) + 7 * arc * (1 - P(air, 0.6, 1));
-      p.feet[o + 2] = 0.87 + 0.6 * arc;
+      const reachX = c + half + track(u, 0, 4, 0.3, 27, 0.7, 26, 1, 4);
+      const x = lerp(F + 18 + far, reachX, smooth(P(u, 0, 0.25)));
+      p.feet[o] = lerp(x, L + 16 + far, smooth(P(u, 0.7, 1)));
+      p.feet[o + 1] = track(t, a, 0, a + 0.25 * air, 25, a + 0.5 * air, 33, a + 0.8 * air, 14, land, 0);
+      p.feet[o + 2] = track(t, a, 0.87, a + 0.3 * air, 1.5, a + 0.75 * air, 1.3, land, 0.87);
       p.feet[o + 3] = 0;
     }
   }
 
-  // The head follows the dot: low and forward, pitched toward it.
-  const hx = p.sx + lerp(13.5, 12.5, down);
-  const hy = p.sy + lerp(9, 1.5, down) + 2 * arc;
-  const look = Math.atan2(dotY - hy, dotX - hx);
+  // The head follows the dot: low and forward, pitched toward it. In the air it leads; landed, the nose goes down to the paws.
+  const hx = p.sx + track(t, 0, 11.5, crouch, 12, coilAt, 12, a, 10.5, a + 0.4 * air, 12.5, land, 11.5, squash, 10.5);
+  const hy0 = p.sy + track(t, 0, 6, crouch, 3.5, coilAt, 3.5, a, 3, a + 0.2 * air, 6, a + 0.5 * air, 4.5, a + 0.8 * air, -1, land, 0.5, squash, 1.5, settled, 4);
+  const look = cl(Math.atan2(dotY - hy0, dotX - hx), -0.45, 0.4) * 0.8;
   p.headX = hx + 0.4 * w;
-  p.headY = hy + 6 * cl(look, -0.2, 0.5) * (1 - air);
-  p.headA = cl(look, -0.35, 0.6) * 0.8 * (1 - air) + pitch * 0.6;
-  p.turn = 0;
+  p.headY = hy0;
+  p.headA = lerp(look, track(t, a, look, a + 0.2 * air, 0.3, a + 0.5 * air, -0.05, a + 0.8 * air, -0.5, squash, -0.6, settled, -0.3), P(t, a - 0.01, a));
+  p.yaw = 1;
 
-  // Tail low and straight behind, its tip twitching; it streams out in the air.
+  // Tail low and straight behind, its tip twitching; it streams out in the air and whips up as it lands.
+  const down = E.outCubic(P(t, 0, crouch));
+  const pitch = Math.atan2(sy - hy, 2 * reach);
   for (let i = 0; i < TAIL; i++) {
-    const twitch = 0.09 * i * Math.sin(t * 9 - i * 0.6) * (1 - air) + 0.06 * i * w;
-    p.tail[i] = lerp(lerp(TAIL_UP[i], TAIL_LOW[i], down) + twitch, Math.PI + pitch - 0.05 * i, P(air, 0, 0.3));
+    const twitch = 0.07 * i * Math.sin(t * 9 - i * 0.6) * (1 - u) + 0.05 * i * w;
+    const stream = lerp(lerp(TAIL_UP[i], TAIL_LOW[i], down) + twitch, Math.PI + pitch * 0.6 - 0.05 * i, smooth(P(u, 0, 0.3)));
+    p.tail[i] = lerp(stream, TAIL_LANDED[i], smooth(P(t, land - 0.04, settled)));
+  }
+}
+
+/* ------------------------------------------------------------------ canvas */
+
+/** Traces the silhouette as one path: rig (0, 0) lands on (ox, gy), `sc` px per rig unit. Fill it once and the parts are one shape. */
+export function trace(ctx: CanvasRenderingContext2D, s: Shape, ox: number, gy: number, sc: number) {
+  ctx.beginPath();
+  const d = s.discs;
+  for (let i = 0; i < d.length; i += 3) {
+    const x = ox + d[i] * sc;
+    const y = gy - d[i + 1] * sc;
+    ctx.moveTo(x + d[i + 2] * sc, y);
+    ctx.arc(x, y, d[i + 2] * sc, 0, Math.PI * 2);
+  }
+  for (const q of s.polys) {
+    // Every outline runs the same way round as the discs, so overlaps add up instead of cancelling.
+    let area = 0;
+    for (let i = 0; i < q.length; i += 2) area += q[i] * q[(i + 3) % q.length] - q[(i + 2) % q.length] * q[i + 1];
+    const n = q.length / 2;
+    for (let j = 0; j < n; j++) {
+      const i = (area > 0 ? n - 1 - j : j) * 2;
+      if (j) ctx.lineTo(ox + q[i] * sc, gy - q[i + 1] * sc);
+      else ctx.moveTo(ox + q[i] * sc, gy - q[i + 1] * sc);
+    }
+    ctx.closePath();
   }
 }

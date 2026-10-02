@@ -7,8 +7,8 @@ import {
   buildStreets, cl, dash as drawDash, decode, drawStreets, entPos as streetPos, font, hash, lerp, mulberry32, pad, rgb, trunc,
   type Ent, type RGB, type Streets,
 } from './draw';
-import { buildCat, catPoint, catSprite, drawFace, eyesOpen, rimOf, tailSwing } from './cat';
-import { BONES, POUNCE, buildRig, newPose, pouncePose, rigPoint, solve, walkPose } from './catrig';
+import { eyesOpen, fillShape, paintCat, rimOf, sampleSolid, tailSwing } from './cat';
+import { POUNCE, bust, newPose, newShape, pouncePose, skin, walkPose } from './catrig';
 import type { SceneCopy } from './copy';
 
 /** What the particles are before they resolve into the handle. `?intro=<name>` picks one. */
@@ -20,9 +20,9 @@ export const introName = (s: string | null | undefined): IntroName => (INTROS as
 /** Per variant: when (timeline seconds) the cat starts resolving into the handle, and the seconds its cat phase adds to the home cut. */
 const VARIANT: Record<IntroName, { morph: number; extra: number }> = {
   sit: { morph: 8.6, extra: 0 },
-  walk: { morph: 8.75, extra: 1.4 },
+  walk: { morph: 8.8, extra: 1.4 },
   silhouette: { morph: 8.6, extra: 0.3 },
-  pounce: { morph: 8.56, extra: 0.9 },
+  pounce: { morph: 8.63, extra: 0.9 },
   peek: { morph: 8.6, extra: 0.5 },
 };
 /**
@@ -314,218 +314,197 @@ export async function createMachine(cv: HTMLCanvasElement, data: MachineData, op
     under?: (t: number, a: number) => void;
     over?: (t: number, a: number) => void;
   }
+  /** Fills the cat as it is at time t, in the text colour. */
+  type Paint = (o: CanvasRenderingContext2D, t: number) => void;
   const at = [0, 0];
-  /** Which of `len` samples particle i takes: every sample is used, evenly, whether there are more particles or more samples. */
-  const pick = (i: number, len: number) => Math.floor((i * len) / pts.length) % len;
-  /** The sitting cat of cat.ts, sampled finely enough to use every particle. */
-  const denseCat = (size: number, n: number) => buildCat(size, Math.max(1.5, size / (62 * Math.sqrt((0.9 * n) / 1100))));
+  const pose = newPose();
+  const shape = newShape();
 
-  /** sit: the cat grows out of the middle of the box, sits there, flicks its tail and blinks while it is scanned. */
-  function sitAct(n: number): Act {
-    const size = Math.min(box.h * 0.94, box.w * 0.7);
-    const cat = denseCat(size, n);
-    const s = size / 100;
-    const x0 = box.cx - size / 2;
-    const y0 = box.cy - size / 2;
-    let grow = 0;
-    let swing = 0;
-    let now = 0;
-    return {
-      dot: cl(cat.step * 0.72, 1.8, 2.8),
-      frame(t) {
-        grow = E.outExpo(P(t, 6.5, 7.2));
-        swing = tailSwing(t - 7.25);
-        now = t;
-      },
-      place(i) {
-        const p = cat.pts[pick(i, cat.pts.length)];
-        catPoint(p, s, swing, at);
-        const k = grow * (1 + 0.006 * Math.sin(now * 3 + p.r1 * 6));
-        at[0] = box.cx + (x0 + at[0] - box.cx) * k;
-        at[1] = box.cy + (y0 + at[1] - box.cy) * k;
-        return 1;
-      },
-      over: (t, a) => drawFace(ctx, x0, y0, s, eyesOpen(t - 5.12), a * P(t, 7.05, 7.3)),
-    };
-  }
-
-  /** silhouette: no dots. Its outline is traced, the scan line fills it in, and only then does it break into particles. */
-  function silhouetteAct(n: number): Act {
-    const size = Math.min(box.h * 0.94, box.w * 0.7);
-    const cat = denseCat(size, n);
-    const s = size / 100;
-    const x0 = box.cx - size / 2;
-    const y0 = box.cy - size / 2;
-    const whole = catSprite(size, dpr, 'all');
-    const bodyS = catSprite(size, dpr, 'body');
-    const tailS = catSprite(size, dpr, 'tail');
-    const rim = whole && rimOf(whole, 1.6 * dpr);
-    let swing = 0;
+  /**
+   * A cat drawn solid, as one filled shape. At MORPH the particles take its place: they are sampled from that very
+   * frame and packed inside its outline, so nothing changes on screen; the shape then fades from under them as they leave.
+   */
+  function solidAct(n: number, paint: Paint, under?: Act['under'], over?: Act['over']): Act {
+    const room = 60;
+    const x0 = box.cx - box.w / 2 - room;
+    const y0 = box.cy - box.h / 2 - room;
+    const s = sampleSolid(box.w + 2 * room, box.h + 2 * room, n, (o) => {
+      o.translate(-x0, -y0);
+      paint(o, MORPH);
+    });
     let on = 0;
     return {
-      dot: cat.step * 1.08,
+      dot: s.step * 1.08,
       frame(t) {
-        swing = t < 8 ? 0 : tailSwing(t - 7.55) * 0.5;
         on = t >= MORPH - 0.03 ? 1 : 0;
       },
       place(i) {
-        const p = cat.pts[pick(i, cat.pts.length)];
-        catPoint(p, s, swing, at);
-        at[0] += x0;
-        at[1] += y0;
+        // Every sample is used, evenly, whether there are more particles or more samples.
+        const q = s.pts[Math.floor((i * s.pts.length) / pts.length) % s.pts.length];
+        at[0] = x0 + q[0];
+        at[1] = y0 + q[1];
         return on;
       },
-      under(t) {
-        const solid = 1 - P(t, MORPH - 0.03, MORPH + 0.1);
-        if (!rim || !bodyS || !tailS || solid <= 0) return;
+      under(t, a) {
+        under?.(t, a);
+        const solid = 1 - P(t, MORPH, MORPH + 0.24);
+        if (solid <= 0) return;
         ctx.save();
         ctx.globalAlpha = solid;
-        const trace = E.inOutCubic(P(t, 6.6, 7.25));
-        if (trace > 0 && t < 8) {
-          ctx.save();
-          ctx.beginPath();
-          ctx.moveTo(box.cx, box.cy);
-          ctx.arc(box.cx, box.cy, size, -Math.PI / 2, -Math.PI / 2 + TAU * trace);
-          ctx.closePath();
-          ctx.clip();
-          ctx.drawImage(rim, x0, y0, size, size);
-          ctx.restore();
-        }
-        if (t >= 7) {
-          // The first pass of the scan line is what fills it.
-          ctx.beginPath();
-          ctx.rect(x0 - 4, box.cy - box.h / 2, size + 8, t < 8 ? (t - 7) * box.h : box.h);
-          ctx.clip();
-          const rx = x0 + 61 * s;
-          const ry = y0 + 89 * s;
-          ctx.translate(rx, ry);
-          ctx.rotate(swing);
-          ctx.drawImage(tailS, x0 - rx, y0 - ry, size, size);
-          ctx.rotate(-swing);
-          ctx.translate(-rx, -ry);
-          ctx.drawImage(bodyS, x0, y0, size, size);
-          drawFace(ctx, x0, y0, s, eyesOpen(t - 5.12), 1);
-        }
+        paint(ctx, Math.min(t, MORPH));
         ctx.restore();
       },
+      over,
     };
+  }
+
+  /** sit: it rises from the floor of the frame, sitting; looks back over its shoulder, flicks its tail and blinks while it is scanned. */
+  function sitAct(n: number): Act {
+    const size = Math.min(box.h * 0.94, box.w * 0.7);
+    const x0 = box.cx - size / 2;
+    const y0 = box.cy - size / 2;
+    const fy = y0 + size * 0.97;
+    return solidAct(n, (o, t) => {
+      const grow = E.outExpo(P(t, 6.5, 7.1));
+      if (grow <= 0) return;
+      o.save();
+      o.translate(box.cx, fy);
+      o.scale(grow, grow);
+      o.translate(-box.cx, -fy);
+      paintCat(o, x0, y0, size, tailSwing(t - 7.25) * P(t, 7.1, 7.4), eyesOpen(t - 5.12), 1 - 2 * E.inOutCubic(P(t, 7.4, 7.75)));
+      o.restore();
+    });
+  }
+
+  /** silhouette: its outline is traced, the first pass of the scan line fills it in, and only then does it break into particles. */
+  function silhouetteAct(n: number): Act {
+    const size = Math.min(box.h * 0.94, box.w * 0.7);
+    const x0 = box.cx - size / 2;
+    const y0 = box.cy - size / 2;
+    const whole = document.createElement('canvas');
+    whole.width = whole.height = Math.max(8, Math.ceil(size * dpr));
+    const w = whole.getContext('2d');
+    if (w) {
+      w.scale(dpr, dpr);
+      paintCat(w, 0, 0, size);
+    }
+    const rim = rimOf(whole, 1.6 * dpr);
+    return solidAct(n, (o, t) => {
+      const trace = E.inOutCubic(P(t, 6.6, 7.25));
+      if (trace > 0 && t < 8) {
+        o.save();
+        o.beginPath();
+        o.moveTo(box.cx, box.cy);
+        o.arc(box.cx, box.cy, size, -Math.PI / 2, -Math.PI / 2 + TAU * trace);
+        o.closePath();
+        o.clip();
+        o.drawImage(rim, x0, y0, size, size);
+        o.restore();
+      }
+      if (t < 7) return;
+      o.save();
+      o.beginPath();
+      o.rect(x0 - 4, box.cy - box.h / 2, size + 8, t < 8 ? (t - 7) * box.h : box.h);
+      o.clip();
+      paintCat(o, x0, y0, size, t < 8 ? 0 : tailSwing(t - 7.55) * 0.5, eyesOpen(t - 5.12));
+      o.restore();
+    });
   }
 
   /** peek: ears over the bottom edge of the frame, then eyes that look both ways, then the whole head. */
   function peekAct(n: number): Act {
-    const size = Math.min(box.h * 1.5, box.w * 1.2);
-    // Only the head and shoulders ever show: spend every particle there.
-    const cat = denseCat(size, n * 1.9);
-    const seen = cat.pts.filter((p) => !p.tail && p.y < size * 0.66);
-    const s = size / 100;
-    const x0 = box.cx - size * 0.455;
+    const sc = Math.min(box.h * 0.6, box.w * 0.48) / 11.2;
     const floor = box.cy + box.h / 2;
-    const hidden = (box.h * 0.9) / size;
-    let y0 = 0;
+    // How high the middle of the skull is over the edge, in head units: ears, then eyes, then all of it.
     const rise = (t: number) =>
-      lerp(lerp(lerp(hidden, 0.42, E.outCubic(P(t, 6.6, 6.95))), 0.25, E.inOutCubic(P(t, 7.25, 7.5))), 0, E.outBack(P(t, 8.02, 8.34), 2.2));
-    const top = (t: number) => box.cy - box.h / 2 + box.h * 0.1 - size * 0.04 + rise(t) * size;
-    return {
-      dot: cl(cat.step * 0.72, 1.8, 2.8),
-      frame(t) {
-        y0 = top(t);
+      lerp(lerp(lerp(-14, -5.3, E.outCubic(P(t, 6.6, 6.95))), 1.7, E.inOutCubic(P(t, 7.25, 7.5))), 8, E.outBack(P(t, 8.02, 8.34), 2.2));
+    return solidAct(
+      n,
+      (o, t) => {
+        // First to the left, then to the right, then at you.
+        const look = -E.inOutCubic(P(t, 7.5, 7.62)) + 2 * E.inOutCubic(P(t, 7.76, 7.9)) - E.inOutCubic(P(t, 8.02, 8.14));
+        const y = rise(t);
+        const px = (x: number) => box.cx + x * sc;
+        const py = (dy: number) => floor - (y + dy) * sc;
+        o.save();
+        o.beginPath();
+        o.rect(box.cx - box.w / 2, box.cy - box.h / 2 - 60, box.w, box.h + 59);
+        o.clip();
+        bust(shape, 0, y, 1);
+        o.strokeStyle = rgb(TEXT);
+        o.lineWidth = Math.max(1, 0.13 * sc);
+        o.lineCap = 'round';
+        o.beginPath();
+        for (const side of [-1, 1]) {
+          for (const [from, to] of [
+            [-1.4, -0.3],
+            [-2, -2],
+            [-2.6, -3.6],
+          ]) {
+            o.moveTo(px(side * 4.4), py(from));
+            o.lineTo(px(side * 9.4), py(to));
+          }
+        }
+        o.stroke();
+        fillShape(o, shape, box.cx, floor, sc, eyesOpen(t - 5.24), rgb(TEXT), look);
+        o.fillStyle = rgb(BG);
+        o.beginPath();
+        o.moveTo(px(-0.6), py(-1.5));
+        o.lineTo(px(0.6), py(-1.5));
+        o.lineTo(px(0), py(-2.3));
+        o.closePath();
+        o.fill();
+        o.restore();
       },
-      place(i) {
-        const p = seen[pick(i, seen.length)];
-        at[0] = x0 + p.x;
-        at[1] = y0 + p.y;
-        return at[1] < floor - 1 ? 1 : 0;
-      },
-      under(_t, a) {
+      (_t, a) => {
         ctx.fillStyle = rgb(FAINT, a);
         ctx.fillRect(box.cx - box.w / 2, floor, box.w, 1);
       },
-      over(t, a) {
-        // First to the left, then to the right, then at you.
-        const look = -E.inOutCubic(P(t, 7.5, 7.62)) + 2 * E.inOutCubic(P(t, 7.76, 7.9)) - E.inOutCubic(P(t, 8.02, 8.14));
-        ctx.save();
-        ctx.beginPath();
-        ctx.rect(box.cx - box.w / 2, box.cy - box.h / 2 - 40, box.w, box.h + 39);
-        ctx.clip();
-        drawFace(ctx, x0, y0, s, eyesOpen(t - 5.24), a, look);
-        ctx.restore();
-      },
-    };
+    );
   }
 
-  /** The rig's stage: where rig x = 0 and the ground are on screen, and how big a rig unit is. */
-  function stage(n: number, sc: number, ox: number, pose: (p: ReturnType<typeof newPose>, t: number) => void, edge: boolean) {
-    const rig = buildRig(n);
-    const p = newPose();
-    const B = new Float32Array(BONES * 5);
+  /** The ground the side-on cat stands on: a measuring line with a tick every ten rig units. */
+  function ground(a: number, ox: number, gy: number, sc: number) {
+    const left = box.cx - box.w / 2;
+    ctx.fillStyle = rgb(FAINT, a);
+    ctx.fillRect(left + 10, gy, box.w - 20, 1);
+    for (let x = (((ox - left) % (10 * sc)) + 10 * sc) % (10 * sc); x < box.w - 10; x += 10 * sc) if (x > 10) ctx.fillRect(left + x, gy, 1, 5);
+  }
+
+  /** walk: it walks in from the left in profile, stops, sits down and looks back over its shoulder. */
+  function walkAct(n: number): Act {
+    const sc = Math.min((box.h * 0.84) / 60, box.w / 84);
+    const ox = box.cx + 8 * sc;
     const gy = box.cy + box.h * 0.42;
     const left = box.cx - box.w / 2;
-    let fade = 0;
-    return {
-      p,
-      gy,
-      dot: cl(rig.step * sc * 0.8, 1.8, 2.8),
-      frame(t: number) {
-        pose(p, t - 6.5);
-        solve(p, B);
-        fade = P(t, 6.5, 6.75);
-      },
-      place(i: number) {
-        const j = i % rig.n;
-        rigPoint(rig, B, p, j, at);
-        at[0] = ox + at[0] * sc;
-        at[1] = gy - at[1] * sc;
+    return solidAct(
+      n,
+      (o, t) => {
+        walkPose(pose, t - 6.5);
+        skin(pose, shape);
         // It comes in through the left edge of the frame.
-        return rig.shade[j] * fade * (edge ? P(at[0], left - 6, left + 22) : 1);
+        const edge = o.createLinearGradient(left - 6, 0, left + 22, 0);
+        edge.addColorStop(0, rgb(TEXT, 0));
+        edge.addColorStop(1, rgb(TEXT));
+        fillShape(o, shape, ox, gy, sc, eyesOpen(t - 5.44), edge);
       },
-      /** The ground it stands on: a measuring line with a tick every ten units. */
-      ground(a: number) {
-        ctx.fillStyle = rgb(FAINT, a * fade);
-        ctx.fillRect(left + 10, gy, box.w - 20, 1);
-        for (let x = ox % (10 * sc); x < box.w - 10; x += 10 * sc) if (x > 10) ctx.fillRect(left + x, gy, 1, 5);
-      },
-    };
-  }
-
-  /** walk: it walks in from the left in profile, stops, sits down and turns its head to the camera. */
-  function walkAct(n: number): Act {
-    const sc = Math.min((box.h * 0.84) / 67, box.w / 84);
-    const ox = box.cx - 4 * sc;
-    const st = stage(n, sc, ox, walkPose, true);
-    return {
-      dot: st.dot,
-      frame: st.frame,
-      place: st.place,
-      under: (_t, a) => st.ground(a),
-      over(t, a) {
-        const hx = ox + st.p.headX * sc;
-        const hy = st.gy - st.p.headY * sc;
-        const side = a * (1 - P(st.p.turn, 0, 0.45)) * P(hx, box.cx - box.w / 2, box.cx - box.w / 2 + 30);
-        if (side > 0) {
-          // In profile: one eye.
-          const c = Math.cos(st.p.headA);
-          const sn = Math.sin(st.p.headA);
-          ctx.fillStyle = rgb(BG, side);
-          ctx.beginPath();
-          ctx.ellipse(hx + (3.3 * c - 1.5 * sn) * sc, hy - (3.3 * sn + 1.5 * c) * sc, 1.25 * sc, 0.95 * sc, -st.p.headA, 0, TAU);
-          ctx.fill();
-        }
-        drawFace(ctx, hx - 45.5 * (sc / 2), hy - 31 * (sc / 2), sc / 2, eyesOpen(t - 5.44), a * P(st.p.turn, 0.6, 1));
-      },
-    };
+      (t, a) => ground(a * P(t, 6.5, 6.75), ox, gy, sc),
+    );
   }
 
   /** pounce: crouched, it watches the red marker dart about, wiggles, and jumps on it; the landing is the handle. */
   function pounceAct(n: number): Act {
-    const sc = Math.min((box.h * 0.8) / 50, box.w / 128);
-    const ox = box.cx + 22 * sc;
+    // A narrow frame keeps the cat large and lets the tail hang out of it.
+    const sc = Math.min((box.h * 0.8) / 52, box.w / (wide ? 112 : 92));
+    const ox = box.cx + (wide ? 22 : 12.5) * sc;
+    const gy = box.cy + box.h * 0.42;
     // The marker's stops (seconds, rig x, rig y): it ends where the forepaws will land.
     const stops = [
       [0.15, 30, 12],
-      [0.5, 16, 5],
+      [0.5, 14, 5],
       [0.82, 34, 17],
-      [1.12, 20, 9],
-      [1.4, POUNCE.to + 10, 2],
+      [1.08, 18, 9],
+      [1.3, POUNCE.to + 17, 1.6],
     ];
     const dot = (tl: number) => {
       let x = stops[0][1];
@@ -537,27 +516,25 @@ export async function createMachine(cv: HTMLCanvasElement, data: MachineData, op
       }
       return [x, y];
     };
-    const st = stage(n, sc, ox, (p, tl) => pouncePose(p, tl, ...(dot(tl) as [number, number])), false);
-    return {
-      dot: st.dot,
-      frame: st.frame,
-      place: st.place,
-      under: (_t, a) => st.ground(a),
-      over(t, a) {
+    return solidAct(
+      n,
+      (o, t) => {
+        const [x, y] = dot(t - 6.5);
+        pouncePose(pose, t - 6.5, x, y);
+        skin(pose, shape);
+        o.save();
+        o.globalAlpha *= P(t, 6.5, 6.75);
+        fillShape(o, shape, ox, gy, sc);
+        o.restore();
+      },
+      (t, a) => ground(a * P(t, 6.5, 6.75), ox, gy, sc),
+      (t, a) => {
         const tl = t - 6.5;
         const [x, y] = dot(tl);
         const px = ox + x * sc;
-        const py = st.gy - y * sc;
-        const hx = ox + st.p.headX * sc;
-        const hy = st.gy - st.p.headY * sc;
-        const c = Math.cos(st.p.headA);
-        const sn = Math.sin(st.p.headA);
-        ctx.fillStyle = rgb(BG, a);
-        ctx.beginPath();
-        ctx.ellipse(hx + (3.3 * c - 1.5 * sn) * sc, hy - (3.3 * sn + 1.5 * c) * sc, 1.25 * sc, 0.95 * sc, -st.p.headA, 0, TAU);
-        ctx.fill();
+        const py = gy - y * sc;
         // The marker: the same red square the sweep put on the subject.
-        const on = P(tl, 0.1, 0.2) * (1 - P(tl, POUNCE.land - 0.03, POUNCE.land));
+        const on = a * P(tl, 0.1, 0.2) * (1 - P(tl, POUNCE.land - 0.03, POUNCE.land));
         if (on > 0) {
           const pulse = 0.5 + 0.5 * Math.sin(tl * 22);
           ctx.fillStyle = rgb(RED, 0.18 * on);
@@ -576,7 +553,7 @@ export async function createMachine(cv: HTMLCanvasElement, data: MachineData, op
           ctx.stroke();
         }
       },
-    };
+    );
   }
 
   const ACTS: Record<IntroName, (n: number) => Act> = { sit: sitAct, walk: walkAct, silhouette: silhouetteAct, pounce: pounceAct, peek: peekAct };
