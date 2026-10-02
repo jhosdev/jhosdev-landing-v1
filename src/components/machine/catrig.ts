@@ -17,8 +17,10 @@
 import { E, P, cl, lerp } from './draw';
 
 const UPPER = 8.5;
-const FORE = 12.5;
-const FPAW = 3.2;
+const FORE = 13.3;
+const FPAW = 2.1;
+/** Fore paw, heel to toe. */
+const FTOE = 1.9;
 const THIGH = 9;
 const SHANK = 10;
 const META = 7;
@@ -60,20 +62,41 @@ export interface Pose {
   yaw: number;
   /** Direction of each tail segment, root to tip. */
   tail: Float32Array;
+  /** Ear twitches (radians, tip back about the base): far ear, near ear. */
+  earA: number;
+  earB: number;
 }
 
-export const newPose = (): Pose => ({ hx: 0, hy: 0, sx: 0, sy: 0, bend: 0, feet: new Float32Array(16), headX: 0, headY: 0, headA: 0, yaw: 1, tail: new Float32Array(TAIL) });
+export const newPose = (): Pose => ({ hx: 0, hy: 0, sx: 0, sy: 0, bend: 0, feet: new Float32Array(16), headX: 0, headY: 0, headA: 0, yaw: 1, tail: new Float32Array(TAIL), earA: 0, earB: 0 });
+
+/** What a part of the silhouette is: how it joins the rest. */
+export const BODY_PART = 0;
+export const NEAR_LEG = 1;
+export const FAR_LEG = 2;
+export const TAIL_PART = 3;
 
 /** A silhouette, in rig units. */
 export interface Shape {
   /** Discs (x, y, r), flat: the body, the legs and the tail are swept out of them. */
   discs: number[];
+  /**
+   * Parts, flat (end, kind, from, to): discs up to `end` (an index into `discs`) belong to a part of that kind;
+   * for a leg, discs from..to are its shin or forearm, the stretch a far leg is parted from by a hairline.
+   */
+  parts: number[];
   /** Closed outlines (x, y, ...): the skull and the ears. */
   polys: number[][];
   /** Eyes (x, y, rx, ry, tilt), flat. */
   eyes: number[];
 }
-export const newShape = (): Shape => ({ discs: [], polys: [], eyes: [] });
+export const newShape = (): Shape => ({ discs: [], parts: [], polys: [], eyes: [] });
+const clear = (s: Shape) => {
+  s.discs.length = 0;
+  s.parts.length = 0;
+  s.polys.length = 0;
+  s.eyes.length = 0;
+};
+const part = (s: Shape, kind: number, from = 0, to = 0) => s.parts.push(s.discs.length, kind, from, to);
 
 /* ------------------------------------------------------------------- shape */
 
@@ -81,7 +104,7 @@ export const newShape = (): Shape => ({ discs: [], polys: [], eyes: [] });
  * Sweeps a disc along a smooth curve through the keys (x, y, radius to the left of travel, radius to the right).
  * The curve passes through every key; the radius eases from one to the next, so the limb tapers without a joint.
  */
-function sweep(out: number[], k: number[]) {
+function sweep(out: number[], k: number[], marks?: number[]) {
   const n = k.length / 4;
   const tx: number[] = [];
   const ty: number[] = [];
@@ -103,6 +126,7 @@ function sweep(out: number[], k: number[]) {
   }
   const slope = (o: number, i: number) => (k[Math.min(n - 1, i + 1) * 4 + o] - k[Math.max(0, i - 1) * 4 + o]) / 2;
   for (let i = 0; i < n - 1; i++) {
+    marks?.push(out.length);
     const a = i * 4;
     const b = a + 4;
     const len = Math.hypot(k[b] - k[a], k[b + 1] - k[a + 1]);
@@ -148,34 +172,48 @@ function contour(pts: number[], per = 6): number[] {
 }
 
 // The skull, clockwise from the crown, in profile (nose toward +x) and from the front. Same points, so one becomes the other.
-const SKULL_SIDE = [0.6, 4.9, 3.0, 4.2, 4.6, 2.9, 5.6, 1.4, 6.3, 0.1, 6.0, -1.6, 4.8, -3.0, 2.2, -3.9, -0.4, -4.3, -2.6, -4.0, -4.2, -2.9, -5.0, -1.2, -5.1, 0.8, -4.4, 2.7, -3.0, 4.0, -1.2, 4.8];
-const SKULL_FRONT = [0, 4.7, 2.6, 4.35, 4.6, 2.9, 5.5, 0.9, 5.6, -0.9, 4.9, -2.6, 3.2, -3.8, 1.4, -4.3, 0, -4.4, -1.4, -4.3, -3.2, -3.8, -4.9, -2.6, -5.6, -0.9, -5.5, 0.9, -4.6, 2.9, -2.6, 4.35];
+// In profile: a round cranium, the forehead sloping to a short nose, a small chin set back under it, the jaw running back to the throat.
+const SKULL_SIDE = [0.6, 4.9, 3.0, 4.05, 4.7, 2.45, 6.3, 0.65, 6.4, -0.45, 5.6, -1.55, 4.3, -2.55, 2.1, -3.45, -0.4, -4.1, -2.6, -3.95, -4.2, -2.9, -5.0, -1.2, -5.1, 0.8, -4.4, 2.7, -3.0, 4.0, -1.2, 4.8];
+// From the front: a domed crown, widest at the cheeks under the eyes, a narrower chin.
+const SKULL_FRONT = [0, 4.6, 2.6, 4.25, 4.4, 2.9, 5.3, 1.0, 5.9, -1.0, 5.5, -2.6, 3.7, -3.75, 1.5, -4.25, 0, -4.35, -1.5, -4.25, -3.7, -3.75, -5.5, -2.6, -5.9, -1.0, -5.3, 1.0, -4.4, 2.9, -2.6, 4.25];
 // Ears: outer base, tip, inner base. In profile the far one shows just ahead of the near one.
 const EARS_SIDE = [
   [-4.0, 2.2, -2.9, 8.2, -0.1, 4.5],
   [-1.6, 3.8, -0.3, 7.8, 1.9, 4.2],
 ];
 const EARS_FRONT = [
-  [-4.9, 2.2, -4.3, 8.4, -1.2, 4.4],
-  [1.2, 4.4, 4.3, 8.4, 4.9, 2.2],
+  [-4.8, 2.4, -4.1, 7.7, -1.5, 4.3],
+  [1.5, 4.3, 4.1, 7.7, 4.8, 2.4],
 ];
 
 /**
  * The head: skull and ears as outlines, and its eyes. (x, y) is the middle of the skull, `pitch` lifts the nose,
- * `yaw` turns it (1 profile, 0 at the camera, -1 profile the other way), `k` is its size.
+ * `yaw` turns it (1 profile, 0 at the camera, -1 profile the other way), `k` is its size, `roll` tilts it
+ * (radians, in the picture plane) and `earA` / `earB` turn each ear's tip back about its base (a twitch).
  */
-export function head(s: Shape, x: number, y: number, pitch: number, yaw: number, k = 1) {
+export function head(s: Shape, x: number, y: number, pitch: number, yaw: number, k = 1, roll = 0, earA = 0, earB = 0) {
   const side = Math.abs(yaw);
   const flip = yaw < 0 ? -1 : 1;
   // The pitch fades as the head comes round, so it never jumps when the nose crosses the middle.
-  const c = Math.cos(pitch * yaw);
-  const sn = Math.sin(pitch * yaw);
+  const c = Math.cos(pitch * yaw + roll);
+  const sn = Math.sin(pitch * yaw + roll);
   const put = (out: number[], lx: number, ly: number) => out.push(x + (lx * flip * c - ly * sn) * k, y + (lx * flip * sn + ly * c) * k);
   const skull: number[] = [];
   for (let i = 0; i < SKULL_SIDE.length; i += 2) put(skull, lerp(SKULL_FRONT[i], SKULL_SIDE[i], side), lerp(SKULL_FRONT[i + 1], SKULL_SIDE[i + 1], side));
   s.polys.push(contour(skull));
   for (let e = 0; e < 2; e++) {
     const q = EARS_FRONT[e].map((v, i) => lerp(v, EARS_SIDE[e][i], side));
+    // A twitch swings the tip about the middle of the base; the base stays put.
+    // From the front each ear swings outward; in profile both swing back.
+    const tw = (e ? earB : earA) * flip * lerp(e ? -1 : 1, 1, side);
+    if (tw) {
+      const bx = (q[0] + q[4]) / 2;
+      const by = (q[1] + q[5]) / 2;
+      const dx = q[2] - bx;
+      const dy = q[3] - by;
+      q[2] = bx + dx * Math.cos(tw) - dy * Math.sin(tw);
+      q[3] = by + dx * Math.sin(tw) + dy * Math.cos(tw) - 0.12 * Math.abs(tw) * 6;
+    }
     const ear: number[] = [];
     // Two sides, each bowed a little outward; the tip stays sharp.
     for (const [a, b, bow] of [
@@ -203,27 +241,60 @@ export function head(s: Shape, x: number, y: number, pitch: number, yaw: number,
     const ex = lat * 2.35 * depth * flip + 3.1 * side;
     const o: number[] = [];
     put(o, ex, lerp(0.35, 1.05, side));
-    s.eyes.push(o[0], o[1], k * seen * lerp(1.2, 0.95, side), lerp(0.85, 0.5, side) * k, pitch * yaw + flip * lerp(lat * -0.25, 0.3, side));
+    s.eyes.push(o[0], o[1], k * seen * lerp(1.2, 0.95, side), lerp(0.85, 0.5, side) * k, pitch * yaw + roll + flip * lerp(lat * -0.25, 0.3, side));
   }
 }
 
-/** Head and shoulders from the front, for a cat that looks over an edge: (x, y) is the middle of the skull. */
-export function bust(s: Shape, x: number, y: number, k: number) {
-  s.discs.length = 0;
-  s.polys.length = 0;
-  s.eyes.length = 0;
+/**
+ * Head and shoulders from the front, for a cat that looks over an edge: (x, y) is the middle of the skull, the edge is y = 0.
+ * `roll` tilts the head, `earA` / `earB` twitch the ears.
+ */
+export function bust(s: Shape, x: number, y: number, k: number, roll = 0, earA = 0, earB = 0) {
+  clear(s);
+  // The neck, and below it the chest widening into two sloping shoulders.
   const neck: number[] = [];
   for (const [dy, r] of [
-    [2, 4.5],
-    [6, 5],
-    [11, 6],
-    [18, 6.6],
-    [26, 6.8],
+    [2, 4.6],
+    [5.5, 5.1],
+    [9, 5.9],
+    [16, 6.8],
+    [26, 7.2],
   ]) {
-    neck.push(x, y - dy * k, r * k, r * k);
+    neck.push(x + Math.sin(roll) * 2.2 * (1 - dy / 26), y - dy * k, r * k, r * k);
   }
   sweep(s.discs, neck);
-  head(s, x, y, 0, 0, k);
+  for (const side of [-1, 1]) {
+    const sh: number[] = [];
+    sh.push(x + side * 3 * k, y - 8 * k, 4.6 * k, 4.6 * k, x + side * 7 * k, y - 12.5 * k, 5 * k, 5 * k, x + side * 8.2 * k, y - 22 * k, 5 * k, 5 * k);
+    sweep(s.discs, sh);
+  }
+  part(s, BODY_PART);
+  head(s, x, y, 0, 0, k, roll, earA, earB);
+}
+
+/**
+ * The forepaws of a cat looking over an edge (y = 0), hooked over it: `grip` (0..1) brings them up from behind it.
+ * Drawn over the bust with a rim of the background around them, they read in front of the chest. `pad` thickens them (the rim).
+ */
+export function paws(s: Shape, x: number, k: number, grip: number, pad = 0) {
+  clear(s);
+  for (const side of [-1, 1]) {
+    const px = x + side * 3.5 * k;
+    const top = lerp(-5, 0.9, grip) * k;
+    const paw: number[] = [];
+    for (const [dx, dy, r] of [
+      [0.8, -9, 2],
+      [0.3, -2.8, 1.95],
+      [0, -0.4, 2.35],
+      [-0.1, 0.15, 2.2],
+    ]) {
+      paw.push(px + side * dx * k, top + dy * k, r * k + pad, r * k + pad);
+    }
+    sweep(s.discs, paw);
+    // Two toe slits, cut like the eyes, fanning out from the top of the paw.
+    if (!pad) for (const toe of [-1, 1]) s.eyes.push(px + toe * 0.75 * k, top + 1.75 * k, 0.13 * k, 0.65 * k, toe * 0.18);
+  }
+  part(s, BODY_PART);
 }
 
 /** Two bones from the root toward the target; `side` picks which way the joint bends (+1 = left of the line). Returns the joint and the reached end. */
@@ -241,9 +312,7 @@ function ik(rx: number, ry: number, tx: number, ty: number, a: number, b: number
 
 /** Turns a pose into its silhouette. */
 export function skin(p: Pose, s: Shape) {
-  s.discs.length = 0;
-  s.polys.length = 0;
-  s.eyes.length = 0;
+  clear(s);
   const len = Math.hypot(p.sx - p.hx, p.sy - p.hy) || 1;
   const dx = (p.sx - p.hx) / len;
   const dy = (p.sy - p.hy) / len;
@@ -265,51 +334,68 @@ export function skin(p: Pose, s: Shape) {
     const k: number[] = [];
     if (HIND[leg]) {
       // Thigh forward, shank back, then the long foot: the Z of a cat's hind leg.
-      const j = ik(hip[0], hip[1], fx - Math.sin(a) * META, fy + 1.4 + Math.cos(a) * META, THIGH, SHANK, 1);
+      const j = ik(hip[0], hip[1], fx - Math.sin(a) * META, fy + 1.3 + Math.cos(a) * META, THIGH, SHANK, 1);
       const knee = [j[0], j[1]];
       const hock = [j[2], j[3]];
       // If the leg cannot reach, the foot hangs from the hock instead of stretching.
       const toe = [hock[0] + Math.sin(a) * META, hock[1] - Math.cos(a) * META];
       const droop = p.feet[leg * 4 + 3];
-      // A folded leg bunches up: sitting, thigh and shank are one rounded haunch.
-      const fold = cl((1 - Math.hypot(hock[0] - hip[0], hock[1] - hip[1]) / (THIGH + SHANK) - 0.2) / 0.3);
-      key(k, hip, 6 + 1.6 * fold);
-      key(k, mid(hip, knee, 0.5), 4.9 + 3 * fold);
-      key(k, knee, 3.2 + 3.4 * fold);
-      key(k, mid(knee, hock, 0.5), 2.2 + 1.6 * fold);
-      key(k, mid(knee, hock, 0.82), 1.7 + 0.6 * fold);
-      key(k, hock, 1.5);
-      key(k, mid(hock, toe, 0.3), 1.35);
+      // Only with the hips low (sitting, crouching) does a folded leg bunch into a haunch; folded in the air, it stays a leg.
+      const fold = cl((1 - Math.hypot(hock[0] - hip[0], hock[1] - hip[1]) / (THIGH + SHANK) - 0.2) / 0.3) * cl((21 - p.hy) / 5);
+      const tuck = cl((1 - Math.hypot(hock[0] - hip[0], hock[1] - hip[1]) / (THIGH + SHANK) - 0.2) / 0.3) - fold;
+      // Thigh muscle, a slim shank that narrows to a bony hock, a thin long foot and an oval paw.
+      key(k, hip, 6 + 1.6 * fold - 0.8 * tuck);
+      key(k, mid(hip, knee, 0.5), 4.9 + 3 * fold - 0.9 * tuck);
+      key(k, knee, 3 + 3.4 * fold - 0.6 * tuck);
+      key(k, mid(knee, hock, 0.35), 2.3 + 1.6 * fold);
+      key(k, mid(knee, hock, 0.8), 1.6 + 0.6 * fold);
+      key(k, hock, 1.45);
+      key(k, mid(hock, toe, 0.4), 1.25);
       key(k, toe, 1.3);
-      key(k, [toe[0] + Math.cos(droop) * HPAW, toe[1] + Math.sin(droop) * HPAW], 1.5);
+      const px = Math.cos(droop) * HPAW;
+      const py = Math.sin(droop) * HPAW;
+      key(k, [toe[0] + px * 0.55, toe[1] + py * 0.55], 1.5);
+      key(k, [toe[0] + px, toe[1] + py], 1.2);
     } else {
-      const px = Math.sin(a) * FPAW;
-      const py = Math.cos(a) * FPAW;
-      const j = ik(shoulder[0], shoulder[1], fx - px, fy + 1.55 + py, UPPER, FORE, -1);
+      // The paw lies flat when the pastern leans at its standing angle; it folds with the wrist in the air.
+      const ta = a - 0.87;
+      const heel = [fx - Math.cos(ta) * FTOE, fy + 1.25 - Math.sin(ta) * FTOE];
+      const j = ik(shoulder[0], shoulder[1], heel[0] - Math.sin(a) * FPAW, heel[1] + Math.cos(a) * FPAW, UPPER, FORE, -1);
       const elbow = [j[0], j[1]];
       const wrist = [j[2], j[3]];
+      const reach = [wrist[0] + Math.sin(a) * FPAW, wrist[1] - Math.cos(a) * FPAW];
+      // Shoulder, the elbow and the forearm's muscle under it, a slim wrist and pastern, then an oval paw.
       key(k, shoulder, 3.9);
       key(k, elbow, 2.9);
-      key(k, mid(elbow, wrist, 0.5), 1.8);
-      key(k, wrist, 1.4);
-      key(k, [wrist[0] + px, wrist[1] - py], 1.5);
+      key(k, mid(elbow, wrist, 0.3), 2.25);
+      key(k, mid(elbow, wrist, 0.78), 1.55);
+      key(k, wrist, 1.35);
+      key(k, mid(wrist, reach, 0.6), 1.25);
+      key(k, reach, 1.35);
+      key(k, [reach[0] + Math.cos(ta) * FTOE * 0.55, reach[1] + Math.sin(ta) * FTOE * 0.55], 1.5);
+      key(k, [reach[0] + Math.cos(ta) * FTOE, reach[1] + Math.sin(ta) * FTOE], 1.25);
     }
-    sweep(s.discs, k);
+    const marks: number[] = [];
+    sweep(s.discs, k, marks);
+    // Hind: just under the knee to the hock; fore: just under the elbow to the end of the pastern.
+    part(s, leg < 2 ? FAR_LEG : NEAR_LEG, marks[HIND[leg] ? 3 : 2], marks[5]);
   }
 
   // Rump to skull in one sweep: the back is the left side of the curve, the belly and chest the right.
   const body: number[] = [];
   const neck = at(p.sx, p.sy, 5, 1.5);
   const skull = [p.headX, p.headY];
-  key(body, at(p.hx, p.hy, -3, 0.3), 3.7, 3.7);
+  key(body, at(p.hx, p.hy, -3.2, -0.3), 4.2, 4.2);
   key(body, at(p.hx, p.hy, -1, 0), 5.4, 5.6);
   key(body, at(lerp(p.hx, p.sx, 0.33), lerp(p.hy, p.sy, 0.33), 0, p.bend), 4.8, 4.2);
   key(body, at(lerp(p.hx, p.sx, 0.68), lerp(p.hy, p.sy, 0.68), 0, p.bend), 5.1, 6.6);
   key(body, [p.sx, p.sy], 6.1, 8);
   key(body, neck, 4.2, 6.7);
-  key(body, mid(neck, skull, 0.5), 3.3, 3.3);
+  // The throat fills in under the jaw, so the chin runs into the chest in one curve.
+  key(body, mid(neck, skull, 0.5), 3.3, 4.3);
   key(body, [p.headX - 1.3 * p.yaw, p.headY + 0.2], 5.3, 3.5);
   sweep(s.discs, body);
+  part(s, BODY_PART);
 
   const tail: number[] = [];
   let q = at(p.hx, p.hy, -6.5, 2.4);
@@ -320,11 +406,12 @@ export function skin(p: Pose, s: Shape) {
     key(tail, q, lerp(1.6, 0.8, (i + 1) / TAIL));
   }
   sweep(s.discs, tail);
+  part(s, TAIL_PART);
 
   // Nothing goes through the floor: what would is flattened against it.
   for (let i = 0; i < s.discs.length; i += 3) s.discs[i + 1] = Math.max(s.discs[i + 1], s.discs[i + 2]);
 
-  head(s, p.headX, p.headY, p.headA, p.yaw, 1.2);
+  head(s, p.headX, p.headY, p.headA, p.yaw, 1.2, 0, p.earA, p.earB);
 }
 
 /* ------------------------------------------------------------------- poses */
@@ -374,6 +461,8 @@ export function sitPose(p: Pose, swing = 0, yaw = -1) {
   p.headY = SIT.headY;
   p.headA = 0.1;
   p.yaw = yaw;
+  p.earA = 0;
+  p.earB = 0;
   for (let leg = 0; leg < 4; leg++) {
     p.feet[leg * 4] = SIT.feet[leg];
     p.feet[leg * 4 + 1] = 0;
@@ -384,7 +473,7 @@ export function sitPose(p: Pose, swing = 0, yaw = -1) {
 }
 
 /** Seconds the walk-in takes, the settle into a sit, and the look back. */
-export const WALK = { stride: 1.5, sitAt: 1.46, sat: 1.9, turnAt: 1.8, turned: 2.08 };
+export const WALK = { stride: 1.5, sitAt: 1.4, sat: 1.98, turnAt: 1.86, turned: 2.14 };
 /** How far it walks: two and three quarter strides, then the sit shifts it back a little. */
 const WALK_DIST = STRIDE * 2.75;
 const SIT_BACK = 6;
@@ -403,7 +492,8 @@ export function walkPose(p: Pose, t: number) {
   const s = WALK_DIST * (u <= u0 ? v * u : v * u0 + v * (u - u0) - (v * (u - u0) ** 2) / (2 * (1 - u0)));
   const go = cl((1 - u) / (1 - u0) * 1.6);
   const sit = P(t, WALK.sitAt, WALK.sat);
-  const q = E.inOutCubic(sit);
+  // A gentle ease: a cat lowers itself, it does not drop.
+  const q = E.inOutSine(sit);
   const x0 = SIT_BACK - WALK_DIST; // s-space -> rig space
   const ph = s / STRIDE;
 
@@ -425,23 +515,32 @@ export function walkPose(p: Pose, t: number) {
   const shBob = 0.9 * bob * Math.cos(4 * Math.PI * (ph + 0.25 - DUTY / 2));
   const c = s + x0;
   p.hx = lerp(c - HALF, SIT.hx, q);
-  p.hy = lerp(BACK + hipBob, SIT.hy, E.inOutCubic(P(sit, 0.1, 0.8)));
+  p.hy = lerp(BACK + hipBob, SIT.hy, E.inOutSine(P(sit, 0.08, 0.85)));
   p.sx = lerp(c + HALF, SIT.sx, q);
-  p.sy = lerp(BACK + shBob, SIT.sy, q);
+  // Sat, it breathes: the chest rises and falls, slowly.
+  const breath = 0.3 * Math.sin((2 * Math.PI * (t - WALK.sat)) / 1.7) * P(t, WALK.sat, WALK.sat + 0.3);
+  p.sy = lerp(BACK + shBob, SIT.sy, q) + breath;
   p.bend = SIT.bend * q;
+  // Follow-through: as the body stops, the head carries on a little and the tail swings over; both come back.
+  const stop = Math.exp(-(((t - WALK.stride * 0.97) / 0.13) ** 2));
 
   // The head is carried level and a little low (it takes a third of the shoulders' bob) and nods slightly behind the beat.
   const turn = E.inOutCubic(P(t, WALK.turnAt, WALK.turned));
   p.yaw = 1 - 2 * turn;
   p.headX = lerp(c + HALF + 11, SIT.headX - 0.6 * (1 - p.yaw), q);
-  p.headY = lerp(32 + shBob * 0.35, SIT.headY, q) - 1.5 * Math.sin(Math.PI * sit);
-  p.headA = lerp(-0.14 + 0.05 * bob * Math.sin(4 * Math.PI * ph - 0.9), 0.1, q);
+  p.headX += 1.1 * stop;
+  p.headY = lerp(32 + shBob * 0.35, SIT.headY, q) - 1.5 * Math.sin(Math.PI * sit) + breath * 0.6;
+  // Turned, a small nod settles the look; then the near ear twitches.
+  const nod = Math.exp(-(((t - WALK.turned - 0.05) / 0.07) ** 2));
+  p.headA = lerp(-0.14 + 0.05 * bob * Math.sin(4 * Math.PI * ph - 0.9), 0.1, q) - 0.09 * nod;
+  p.earA = 0;
+  p.earB = 0.45 * Math.exp(-(((t - WALK.turned - 0.12) / 0.035) ** 2));
 
   // The tail is carried up, and a wave runs along it a little behind the stride; sitting, it curls behind and flicks.
   const flick = Math.exp(-(((t - WALK.sat - 0.22) / 0.09) ** 2));
   for (let i = 0; i < TAIL; i++) {
     const wave = (0.05 + 0.035 * i) * Math.sin(2 * Math.PI * ph - i * 0.75) * bob;
-    p.tail[i] = lerp(TAIL_UP[i] + wave, TAIL_SAT[i] - 0.09 * i * flick, q);
+    p.tail[i] = lerp(TAIL_UP[i] + wave - 0.05 * i * stop, TAIL_SAT[i] - 0.09 * i * flick, q);
   }
 }
 
@@ -475,10 +574,10 @@ const TAIL_LANDED = [2.95, 2.75, 2.5, 2.25, 2.05, 1.95, 2.0];
 /**
  * The pounce variant: crouched low with its rear up, watching the dot at (dotX, dotY); the hind-quarters wiggle;
  * it squeezes down and goes, stretched out in the air; the forepaws land first and the body squashes over them.
- * x = 0 is the middle of the frame.
+ * x = 0 is the middle of the frame; `F` is where it starts (a narrow frame starts it closer).
  */
-export function pouncePose(p: Pose, t: number, dotX: number, dotY: number) {
-  const { crouch, wiggleAt, coilAt, leapAt: a, land, squash, settled, from: F, to: L } = POUNCE;
+export function pouncePose(p: Pose, t: number, dotX: number, dotY: number, F: number = POUNCE.from) {
+  const { crouch, wiggleAt, coilAt, leapAt: a, land, squash, settled, to: L } = POUNCE;
   const air = land - a;
   const u = P(t, a, land);
   const wig = P(t, wiggleAt, wiggleAt + 0.12) * (1 - P(t, coilAt - 0.08, coilAt));
@@ -522,10 +621,15 @@ export function pouncePose(p: Pose, t: number, dotX: number, dotY: number) {
   const hx = p.sx + track(t, 0, 11.5, crouch, 12, coilAt, 12, a, 10.5, a + 0.4 * air, 12.5, land, 11.5, squash, 10.5);
   const hy0 = p.sy + track(t, 0, 6, crouch, 3.5, coilAt, 3.5, a, 3, a + 0.2 * air, 6, a + 0.5 * air, 4.5, a + 0.8 * air, -1, land, 0.5, squash, 1.5, settled, 4);
   const look = cl(Math.atan2(dotY - hy0, dotX - hx), -0.45, 0.4) * 0.8;
-  p.headX = hx + 0.4 * w;
+  // Locked on: the rear wiggles, the head does not.
+  p.headX = hx;
   p.headY = hy0;
   p.headA = lerp(look, track(t, a, look, a + 0.2 * air, 0.3, a + 0.5 * air, -0.05, a + 0.8 * air, -0.5, squash, -0.6, settled, -0.3), P(t, a - 0.01, a));
   p.yaw = 1;
+  // Ears forward while it stalks; they flick back at the impact and come up again.
+  const flinch = Math.exp(-(((t - land - 0.06) / 0.07) ** 2));
+  p.earA = 0.35 * flinch;
+  p.earB = 0.45 * flinch;
 
   // Tail low and straight behind, its tip twitching; it streams out in the air and whips up as it lands.
   const down = E.outCubic(P(t, 0, crouch));
@@ -537,20 +641,258 @@ export function pouncePose(p: Pose, t: number, dotX: number, dotY: number) {
   }
 }
 
+/* ------------------------------------------------------------------- field */
+
+// The parts are not simply laid over each other: the silhouette is the zero line of a distance field.
+// Each part (a leg, the body, the tail) is a hard union of its own discs; a near leg and the tail join
+// the body with a smooth minimum, so every joint gets a soft fillet instead of a crease, and no two legs
+// ever blend with each other. The far legs are cut back by a hairline around the near legs, so when two
+// legs cross they still read as two. The field is sampled on a grid about 1.5px apart and contoured
+// with marching squares into one path; the skull and the ears stay exact outlines on top.
+
+/** How far (rig units) a part blends into the body, and the hairline left between near and far legs. */
+const BLEND = [0, 2.6, 1.6, 1.8];
+const GAP = 0.55;
+const BIG = 1e3;
+
+let grids: Float32Array[] = [];
+/** Grids: body, the shape so far (near), far legs, near legs, the part being added. */
+function grid(n: number) {
+  if (!grids.length || grids[0].length < n) grids = Array.from({ length: 5 }, () => new Float32Array(n));
+  return grids;
+}
+
+const smin = (a: number, b: number, k: number) => {
+  const h = k - Math.abs(a - b);
+  return h <= 0 ? Math.min(a, b) : Math.min(a, b) - (h * h) / (4 * k);
+};
+
+/** The silhouette's distance field on a grid of step g (rig units): negative inside. */
+export interface Field {
+  nx: number;
+  ny: number;
+  x0: number;
+  y0: number;
+  g: number;
+  /** One value per node, row by row from y0 up. */
+  d: Float32Array;
+}
+
+/** Samples the silhouette's field (discs only; the head's outlines are not in it). */
+export function field(s: Shape, g: number): Field {
+  const d = s.discs;
+  let x0 = Infinity;
+  let y0 = Infinity;
+  let x1 = -Infinity;
+  let y1 = -Infinity;
+  for (let i = 0; i < d.length; i += 3) {
+    x0 = Math.min(x0, d[i] - d[i + 2]);
+    x1 = Math.max(x1, d[i] + d[i + 2]);
+    y0 = Math.min(y0, d[i + 1] - d[i + 2]);
+    y1 = Math.max(y1, d[i + 1] + d[i + 2]);
+  }
+  if (!(x1 > x0)) return { nx: 0, ny: 0, x0: 0, y0: 0, g, d: new Float32Array(0) };
+  // Never more than about 200k nodes, however large it is drawn.
+  g = Math.max(g, Math.sqrt(((x1 - x0 + 8) * (y1 - y0 + 8)) / 2e5));
+  x0 -= 4;
+  y0 -= 4;
+  const nx = Math.ceil((x1 + 4 - x0) / g) + 1;
+  const ny = Math.ceil((y1 + 4 - y0) / g) + 1;
+  const n = nx * ny;
+  const [B, N, F, L, Q] = grid(n);
+  B.fill(BIG, 0, n);
+  F.fill(BIG, 0, n);
+  L.fill(BIG, 0, n);
+  const box = [0, 0, 0, 0];
+  /** Hard union of discs [a, b) into `to`, exact to `m` outside them; returns the node box it touched. */
+  const discs = (to: Float32Array, a: number, b: number, m: number) => {
+    box[0] = nx;
+    box[1] = ny;
+    box[2] = 0;
+    box[3] = 0;
+    // The sweeps are dense: a disc that barely moves on from the last one used adds nothing a pixel would show.
+    let lx = Infinity;
+    let ly = 0;
+    let lr = 0;
+    for (let i = a; i < b; i += 3) {
+      const cx = d[i];
+      const cy = d[i + 1];
+      const r = d[i + 2];
+      if (i + 3 < b && Math.hypot(cx - lx, cy - ly) + Math.abs(r - lr) < 0.5 * g) continue;
+      lx = cx;
+      ly = cy;
+      lr = r;
+      const i0 = Math.max(0, Math.floor((cx - r - m - x0) / g));
+      const i1 = Math.min(nx - 1, Math.ceil((cx + r + m - x0) / g));
+      const j0 = Math.max(0, Math.floor((cy - r - m - y0) / g));
+      const j1 = Math.min(ny - 1, Math.ceil((cy + r + m - y0) / g));
+      box[0] = Math.min(box[0], i0);
+      box[1] = Math.min(box[1], j0);
+      box[2] = Math.max(box[2], i1);
+      box[3] = Math.max(box[3], j1);
+      for (let j = j0; j <= j1; j++) {
+        const dy = y0 + j * g - cy;
+        const row = j * nx;
+        for (let k = i0; k <= i1; k++) {
+          const dx = x0 + k * g - cx;
+          const v = Math.sqrt(dx * dx + dy * dy) - r;
+          if (v < to[row + k]) to[row + k] = v;
+        }
+      }
+    }
+  };
+  const P = s.parts;
+  let from = 0;
+  for (let i = 0; i < P.length; i += 4) {
+    if (P[i + 1] === BODY_PART) discs(B, from, P[i], 3);
+    from = P[i];
+  }
+  N.set(B.subarray(0, n));
+  from = 0;
+  for (let i = 0; i < P.length; i += 4) {
+    const kind = P[i + 1];
+    const a = from;
+    from = P[i];
+    if (kind === BODY_PART) continue;
+    const k = BLEND[kind];
+    if (kind === NEAR_LEG) discs(L, P[i + 2], P[i + 3], GAP + g);
+    // Clear only the part's own box, then add its discs.
+    {
+      let bx0 = Infinity;
+      let bx1 = -Infinity;
+      let by0 = Infinity;
+      let by1 = -Infinity;
+      for (let q = a; q < from; q += 3) {
+        bx0 = Math.min(bx0, d[q] - d[q + 2]);
+        bx1 = Math.max(bx1, d[q] + d[q + 2]);
+        by0 = Math.min(by0, d[q + 1] - d[q + 2]);
+        by1 = Math.max(by1, d[q + 1] + d[q + 2]);
+      }
+      const m = k + GAP + g;
+      const c0 = Math.max(0, Math.floor((bx0 - m - x0) / g));
+      const c1 = Math.min(nx - 1, Math.ceil((bx1 + m - x0) / g));
+      for (let j = Math.max(0, Math.floor((by0 - m - y0) / g)), e = Math.min(ny - 1, Math.ceil((by1 + m - y0) / g)); j <= e; j++) Q.fill(BIG, j * nx + c0, j * nx + c1 + 1);
+    }
+    discs(Q, a, from, k + GAP);
+    const [i0, j0, i1, j1] = box;
+    for (let j = j0; j <= j1; j++) {
+      for (let q = j * nx + i0, e = j * nx + i1; q <= e; q++) {
+        const v = Q[q];
+        if (kind === FAR_LEG) {
+          if (v < F[q]) F[q] = v;
+          continue;
+        }
+        const u = smin(B[q], v, k);
+        if (u < N[q]) N[q] = u;
+      }
+    }
+  }
+  // Far legs: cut back by a hairline around the near legs, then joined to the body, softly.
+  const k = BLEND[FAR_LEG];
+  // What is left of a far leg thinner than a couple of pixels is dropped: it would only read as specks.
+  const thin = 0.7 * g;
+  for (let q = 0; q < n; q++) {
+    if (F[q] >= BIG) continue;
+    const cut = Math.max(F[q], GAP - L[q]) + thin;
+    const u = smin(B[q], cut, k);
+    if (u < N[q]) N[q] = u;
+  }
+  return { nx, ny, x0, y0, g, d: N };
+}
+
+/** Anything a path can be built on (a canvas context). */
+interface Pen {
+  moveTo(x: number, y: number): void;
+  lineTo(x: number, y: number): void;
+  closePath(): void;
+}
+
+let links = new Int32Array(0);
+
+/**
+ * Contours a field into the pen with marching squares: rig (0, 0) lands on (ox, gy), `sc` px per rig unit.
+ * Each cell links the zero crossings on its edges, the inside on the left in rig space (clockwise on screen),
+ * and the links are walked into closed outlines: a few polygons, one vertex per crossing. A hole runs the other way.
+ */
+export function contourField(pen: Pen, f: Field, ox: number, gy: number, sc: number) {
+  const { nx, ny, x0, y0, g, d } = f;
+  const n = nx * ny;
+  if (links.length < 2 * n) links = new Int32Array(2 * n);
+  // Edge ids: the edge from node q to its right neighbour is q, to the one above it is n + q.
+  links.fill(-1, 0, 2 * n);
+  const starts: number[] = [];
+  const ids = [0, 0, 0, 0];
+  const v = [0, 0, 0, 0];
+  for (let j = 0; j < ny - 1; j++) {
+    for (let i = 0; i < nx - 1; i++) {
+      const q = j * nx + i;
+      // Corners counter-clockwise (rig y is up): bottom-left, bottom-right, top-right, top-left.
+      v[0] = d[q];
+      v[1] = d[q + 1];
+      v[2] = d[q + 1 + nx];
+      v[3] = d[q + nx];
+      const inside = (v[0] < 0 ? 1 : 0) | (v[1] < 0 ? 2 : 0) | (v[2] < 0 ? 4 : 0) | (v[3] < 0 ? 8 : 0);
+      if (inside === 0 || inside === 15) continue;
+      // Edge k runs from corner k to corner k + 1.
+      ids[0] = q;
+      ids[1] = n + q + 1;
+      ids[2] = q + nx;
+      ids[3] = n + q;
+      // A saddle stays joined across the middle when the middle is inside.
+      const joined = v[0] + v[1] + v[2] + v[3] < 0;
+      for (let k = 0; k < 4; k++) {
+        if (!(v[k] < 0) || v[(k + 1) % 4] < 0) continue;
+        // Leaving the inside across edge k: the outline comes back in across the next edge that enters it.
+        let e = -1;
+        for (let m = 1; m < 4; m++) {
+          const kk = joined ? (k + m) % 4 : (k + 4 - m) % 4;
+          if (!(v[kk] < 0) && v[(kk + 1) % 4] < 0) {
+            e = kk;
+            break;
+          }
+        }
+        if (e < 0) continue;
+        // Walk the outline with the inside on its left: from where it comes in to where it leaves.
+        links[ids[e]] = ids[k];
+        starts.push(ids[e]);
+      }
+    }
+  }
+  const point = (id: number, first: boolean) => {
+    const up = id >= n;
+    const q = up ? id - n : id;
+    const r = up ? q + nx : q + 1;
+    const u = d[q] / (d[q] - d[r]);
+    const i = (q % nx) + (up ? 0 : u);
+    const j = Math.floor(q / nx) + (up ? u : 0);
+    const px = ox + (x0 + i * g) * sc;
+    const py = gy - (y0 + j * g) * sc;
+    if (first) pen.moveTo(px, py);
+    else pen.lineTo(px, py);
+  };
+  for (const s0 of starts) {
+    if (links[s0] < 0) continue;
+    let id = s0;
+    point(id, true);
+    for (let guard = 0; guard < 2 * n; guard++) {
+      const next = links[id];
+      links[id] = -1;
+      if (next < 0 || next === s0) break;
+      point(next, false);
+      id = next;
+    }
+    pen.closePath();
+  }
+}
+
 /* ------------------------------------------------------------------ canvas */
 
 /** Traces the silhouette as one path: rig (0, 0) lands on (ox, gy), `sc` px per rig unit. Fill it once and the parts are one shape. */
 export function trace(ctx: CanvasRenderingContext2D, s: Shape, ox: number, gy: number, sc: number) {
   ctx.beginPath();
-  const d = s.discs;
-  for (let i = 0; i < d.length; i += 3) {
-    const x = ox + d[i] * sc;
-    const y = gy - d[i + 1] * sc;
-    ctx.moveTo(x + d[i + 2] * sc, y);
-    ctx.arc(x, y, d[i + 2] * sc, 0, Math.PI * 2);
-  }
+  contourField(ctx, field(s, 2 / sc), ox, gy, sc);
   for (const q of s.polys) {
-    // Every outline runs the same way round as the discs, so overlaps add up instead of cancelling.
+    // Every outline runs clockwise on screen, like the field's cells, so overlaps add up instead of cancelling.
     let area = 0;
     for (let i = 0; i < q.length; i += 2) area += q[i] * q[(i + 3) % q.length] - q[(i + 2) % q.length] * q[i + 1];
     const n = q.length / 2;

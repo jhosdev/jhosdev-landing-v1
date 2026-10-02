@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DUTY, POUNCE, STRIDE, newPose, newShape, pouncePose, sitPose, skin, walkFoot, walkPose } from '../src/components/machine/catrig';
+import { BODY_PART, DUTY, POUNCE, STRIDE, contourField, field, newPose, newShape, pouncePose, sitPose, skin, walkFoot, walkPose } from '../src/components/machine/catrig';
 import { DEFAULT_INTRO, INTROS, homeCut } from '../src/components/machine/scene';
 
 describe('the cat walks, it does not slide', () => {
@@ -63,6 +63,49 @@ describe('the silhouette', () => {
       expect(s.discs.every(Number.isFinite)).toBe(true);
       expect(s.polys.every((q) => q.every(Number.isFinite))).toBe(true);
       for (let i = 0; i < s.discs.length; i += 3) expect(s.discs[i + 1] - s.discs[i + 2]).toBeGreaterThan(-1e-6);
+    }
+  });
+});
+
+describe('the outline', () => {
+  it('is the distance to the shape: zero on the edge of a lone disc', () => {
+    const s = newShape();
+    s.discs.push(10, 10, 3);
+    s.parts.push(3, BODY_PART, 0, 0);
+    const f = field(s, 0.25);
+    const at = (x: number, y: number) => f.d[Math.round((y - f.y0) / f.g) * f.nx + Math.round((x - f.x0) / f.g)];
+    expect(at(10, 10)).toBeCloseTo(-3, 1);
+    expect(Math.abs(at(13, 10))).toBeLessThan(0.15);
+    expect(at(14, 10)).toBeGreaterThan(0.8);
+  });
+
+  it('contours every pose into closed outlines', () => {
+    const p = newPose();
+    const s = newShape();
+    for (let t = 0; t < 2.4; t += 0.3) {
+      walkPose(p, t);
+      skin(p, s);
+      let open = 0;
+      let points = 0;
+      contourField(
+        {
+          moveTo: () => {
+            open++;
+            points++;
+          },
+          lineTo: (x, y) => {
+            expect(Number.isFinite(x) && Number.isFinite(y)).toBe(true);
+            points++;
+          },
+          closePath: () => open--,
+        },
+        field(s, 0.4),
+        0,
+        0,
+        1,
+      );
+      expect(open).toBe(0);
+      expect(points).toBeGreaterThan(100);
     }
   });
 });

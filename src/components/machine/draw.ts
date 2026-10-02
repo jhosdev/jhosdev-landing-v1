@@ -32,6 +32,7 @@ export const P = (t: number, a: number, b: number) => cl((t - a) / (b - a));
 export const E = {
   outCubic: (x: number) => 1 - Math.pow(1 - x, 3),
   inOutCubic: (x: number) => (x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2),
+  inOutSine: (x: number) => (1 - Math.cos(Math.PI * x)) / 2,
   inOutQuint: (x: number) => (x < 0.5 ? 16 * x * x * x * x * x : 1 - Math.pow(-2 * x + 2, 5) / 2),
   outExpo: (x: number) => (x >= 1 ? 1 : 1 - Math.pow(2, -10 * x)),
   inExpo: (x: number) => (x <= 0 ? 0 : Math.pow(2, 10 * x - 10)),
