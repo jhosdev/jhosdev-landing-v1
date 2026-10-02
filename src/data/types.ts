@@ -78,8 +78,23 @@ export interface Principle {
   value: string;
 }
 
+/** The person outside of work: meta.site.about. */
+export interface About {
+  paragraphs: string[];
+  /** Short label / value rows, e.g. "coding since" / "2015" */
+  facts: { label: string; value: string }[];
+}
+
+/** A public repository: meta.site.openSource[]. */
+export interface Repository {
+  name: string;
+  url: string;
+  language: string;
+  description: string;
+}
+
 export interface PortfolioContent {
-  /** Terminal prompt identity, e.g. "your-name@prod" */
+  /** The handle shown as the headline and in the top bar: the GitHub username, e.g. "your-name" */
   promptUser: string;
   /** Terminal prompt identity suffix, e.g. "portfolio" — hidden on narrow screens */
   promptSuffix: string;
@@ -94,6 +109,12 @@ export interface PortfolioContent {
   spoken: SpokenLanguage[];
   principles: Principle[];
   experience: ExperienceEntry[];
+  /** Absent when the resume has no meta.site.about: the section is not rendered. */
+  about?: About;
+  /** Empty when the resume has no meta.site.openSource: the section is not rendered. */
+  openSource: Repository[];
+  /** The cat's name, when about.facts has one: the particle cat appears, and answers to it as a command. */
+  cat?: string;
   contact: { heading: string; links: ContactLink[] };
   /** Per-locale UI copy for the article pages, e.g. "min read" / "min de lectura" */
   article: { minRead: string; translationLink: string };

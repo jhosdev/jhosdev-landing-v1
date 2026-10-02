@@ -12,7 +12,7 @@ Where the profile data lives, how to publish a change, and how to run the site w
   it uses whatever local copy is already there, and if that's missing too it copies `resume.sample.json` into place.
 - Shape: JSON Resume v1.0.0 plus three custom parts the site will read:
   - `projects[]` with `status`/`statusLabel` (`production` | `active` | `archived`, plus a localized display label) for the project cards — a falsy/missing `status` means the card is skipped;
-  - `meta.site` (`headlineLine2`, `stats`, `principles`, `contactHeading`, `stack`) for the curated page copy — `stack` is the per-category wanted-keyword lists (`streaming`/`data`/`infra`) that `content.ts`'s `pick()` checks against `skills[]`;
+  - `meta.site` (`headlineLine2`, `stats`, `principles`, `contactHeading`, `stack`) for the curated page copy — `stack` is the per-category wanted-keyword lists (`streaming`/`data`/`infra`) that `content.ts`'s `pick()` checks against `skills[]`. Two optional parts add a home section each when present: `about` (`{ paragraphs: string[], facts: { label, value }[] }`; a fact labelled `cat` / `gato` / `gata` names the particle cat and its command) and `openSource` (`{ name, url, language, description }[]`);
   - `meta.linkedin` (`headline`, `about`, `topSkills`, `skills`) for the LinkedIn profile, not rendered.
   Every field appears in `src/data/resume.sample.json`. Skill group names must stay `AI Engineering`, `Languages`,
   `Backend & Data`, `Cloud & Infra` (EN) / `Ingeniería de IA`, `Lenguajes`, `Backend y Datos`, `Nube e Infraestructura`

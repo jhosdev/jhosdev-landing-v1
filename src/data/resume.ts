@@ -1,6 +1,6 @@
 import enRaw from './resume.en.json';
 import esRaw from './resume.es.json';
-import type { Principle, Stat } from './types';
+import type { About, Principle, Repository, Stat } from './types';
 
 // Minimal typed slice of JSON Resume schema v1.0.0 — the shared fields the
 // site and scripts/render-pdf.ts (Typst PDF) both read. Not the full schema.
@@ -89,6 +89,10 @@ export interface ResumeMetaSite {
   contactHeading: string;
   /** Wanted-keyword lists per stack row, checked against skills[] groups by content.ts's pick(). */
   stack: { streaming: string[]; data: string[]; infra: string[] };
+  /** Optional: the person outside of work (the home's about section). */
+  about?: About;
+  /** Optional: public repositories (the home's open source section). */
+  openSource?: Repository[];
 }
 
 export interface ResumeMeta {

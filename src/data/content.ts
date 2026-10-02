@@ -95,7 +95,7 @@ export function getContent(locale: Locale): PortfolioContent {
   const aiEngineering = skillGroup(skills, c.groupNames.aiEngineering);
 
   return {
-    promptUser: `${github?.username ?? 'dev'}@prod`,
+    promptUser: github?.username ?? 'dev',
     promptSuffix: 'portfolio',
     headline: [`${basics.label}.`, site.headlineLine2],
     lede: basics.summary,
@@ -136,6 +136,10 @@ export function getContent(locale: Locale): PortfolioContent {
       url: job.url,
       highlights: job.highlights,
     })),
+    about: site.about && site.about.paragraphs.length + site.about.facts.length > 0 ? site.about : undefined,
+    openSource: site.openSource ?? [],
+    // ponytail: the cat is found by its fact label; give it its own field in meta.site.about if labels ever vary.
+    cat: site.about?.facts.find((fact) => /^(cat|gat[oa])$/i.test(fact.label.trim()))?.value,
     contact: {
       heading: site.contactHeading,
       links: [

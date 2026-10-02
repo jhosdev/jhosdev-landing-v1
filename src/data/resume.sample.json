@@ -94,7 +94,32 @@
         { "key": "depth", "value": "One sentence per principle." },
         { "key": "verification", "value": "Another one." }
       ],
-      "contactHeading": "Working on something hard? Let's talk."
+      "contactHeading": "Working on something hard? Let's talk.",
+      "about": {
+        "paragraphs": [
+          "Mock about paragraph: what this person does when nobody is paying for it.",
+          "A second paragraph, about a hobby and a pet."
+        ],
+        "facts": [
+          { "label": "coding since", "value": "2015" },
+          { "label": "hobby", "value": "chess · running" },
+          { "label": "cat", "value": "Pixel" }
+        ]
+      },
+      "openSource": [
+        {
+          "name": "sample-repo",
+          "url": "https://github.com/ada/sample-repo",
+          "language": "TypeScript",
+          "description": "Mock repository: one sentence about what it does."
+        },
+        {
+          "name": "another-tool",
+          "url": "https://github.com/ada/another-tool",
+          "language": "Rust",
+          "description": "A second mock repository, so the list has more than one row."
+        }
+      ]
     },
     "linkedin": {
       "headline": "Title | what you build | stack | location. Max 220 characters, first 60 matter most.",
