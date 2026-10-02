@@ -120,15 +120,16 @@ function peek(box: CatBox): CatPhase {
   const front = newShape();
   // How high the middle of the skull is over the edge, in head units: ears, then eyes, a small dip, then all of it.
   const rise = (t: number) =>
-    lerp(lerp(lerp(-14, -5.3, E.outCubic(P(t, 6.6, 6.95))), 1.7, E.inOutCubic(P(t, 7.25, 7.5))), 8, E.outBack(P(t, 8.02, 8.32), 2)) -
+    lerp(lerp(lerp(-14, -5.3, E.outCubic(P(t, 6.55, 6.85))), 1.7, E.inOutCubic(P(t, 7.04, 7.28))), 8, E.outBack(P(t, 8.02, 8.32), 2)) -
     0.7 * bump(t, 7.96, 0.05);
   return {
     paint(o, t) {
       // First to the left, then to the right, then at you; the head leans a little after the eyes, then tilts, curious.
-      const look = -E.inOutCubic(P(t, 7.5, 7.62)) + 2 * E.inOutCubic(P(t, 7.76, 7.9)) - E.inOutCubic(P(t, 8.02, 8.14));
-      const roll = -0.07 * (-E.inOutCubic(P(t, 7.54, 7.7)) + 2 * E.inOutCubic(P(t, 7.8, 7.98)) - E.inOutCubic(P(t, 8.04, 8.2))) + 0.12 * E.outBack(P(t, 8.3, 8.5), 1.4);
-      // Ear twitches: the left one while only the ears show, the right one as the head settles.
-      const earA = 0.45 * bump(t, 7.08, 0.035) + 0.2 * bump(t, 7.16, 0.03);
+      // Each glance is quick, each hold long enough to read; the head follows a beat behind.
+      const look = -E.inOutCubic(P(t, 7.32, 7.42)) + 2 * E.inOutCubic(P(t, 7.62, 7.76)) - E.inOutCubic(P(t, 7.94, 8.04));
+      const roll = -0.07 * (-E.inOutCubic(P(t, 7.36, 7.52)) + 2 * E.inOutCubic(P(t, 7.66, 7.84)) - E.inOutCubic(P(t, 7.96, 8.12))) + 0.12 * E.outBack(P(t, 8.3, 8.5), 1.4);
+      // Ear twitches: a double flick of the left one while only the ears show, the right one as the head settles.
+      const earA = 0.45 * bump(t, 6.96, 0.035) + 0.2 * bump(t, 7.04, 0.03);
       const earB = 0.4 * bump(t, 8.47, 0.035);
       const grip = E.outBack(P(t, 8.08, 8.28), 1.6);
       const y = rise(t);
