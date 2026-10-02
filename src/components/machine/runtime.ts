@@ -7,6 +7,7 @@
 //   ?move=0.6         freeze every section's movement at 60% (1 = settled)
 //   ?run=help;proj    run these commands after load (never navigates away)
 //   ?intro            play the intro even if this tab has already seen it
+//   ?intro=walk       ...with that cat (sit, walk, silhouette, pounce, peek); combines with ?seek=
 //   ?cat=2.5          the hero's cat, frozen 2.5s after it was summoned (implies ?move=1)
 
 import { complete, execute, suggest, type Action, type ShellContext } from '../shell/commands';
@@ -40,15 +41,6 @@ interface Section {
 }
 
 const SEEN_KEY = 'mc:seen';
-/** Intro time -> timeline time: the same scenes, cut tighter (boot, sweep, acquire, identify). */
-const WARP = [
-  [0, 0],
-  [2, 2.5],
-  [4.7, 6.5],
-  [7.7, 10.5],
-  [11.2, 14],
-];
-const INTRO_END = WARP[WARP.length - 1][0];
 /** Where the asset's movement picks up after the intro: the name is known, the lock is about to confirm. */
 const HANDOFF = 1.3;
 
@@ -368,13 +360,6 @@ function start(root: HTMLElement, data: RuntimeData) {
   const skipButton = $<HTMLButtonElement>('[data-skip]');
   const host = window as unknown as { seek?: (s: number) => void; DURATION?: number; __mc?: boolean };
 
-  const warp = (x: number) => {
-    for (let i = 1; i < WARP.length; i++) {
-      if (x <= WARP[i][0]) return lerp(WARP[i - 1][1], WARP[i][1], P(x, WARP[i - 1][0], WARP[i][0]));
-    }
-    return WARP[WARP.length - 1][1];
-  };
-
   function endIntro(skipped: boolean) {
     if (!introOn) return;
     introOn = false;
@@ -415,12 +400,23 @@ function start(root: HTMLElement, data: RuntimeData) {
       // The way out is a real control: first in line for the keyboard and for assistive technology.
       skipButton.focus({ preventScroll: true });
     }
-    const { createMachine, CUT_END } = await import('./scene');
+    const { createMachine, homeCut, introName, CUT_END } = await import('./scene');
+    const variant = introName(params.get('intro'));
     const machine = await createMachine(introCanvas, JSON.parse(introCanvas.dataset.machine ?? '{}') as MachineData, {
       copy: JSON.parse(introCanvas.dataset.copy ?? '{}') as SceneCopy,
       total: CUT_END,
+      intro: variant,
     });
     if (!machine) return endIntro(true);
+    // Intro time -> timeline time: the same scenes, cut tighter.
+    const cut = homeCut(variant);
+    const INTRO_END = cut[cut.length - 1][0];
+    const warp = (x: number) => {
+      for (let i = 1; i < cut.length; i++) {
+        if (x <= cut[i][0]) return lerp(cut[i - 1][1], cut[i][1], P(x, cut[i - 1][0], cut[i][0]));
+      }
+      return CUT_END;
+    };
     const render = (s: number) => machine.render(Math.min(warp(Math.max(0, s)), CUT_END - 0.001));
     host.seek = render;
     host.DURATION = INTRO_END;

@@ -6,7 +6,7 @@
 
 import { BG, BODY, E, TAU, TEXT, cl, lerp, mulberry32, rgb } from './draw';
 
-interface CatPt {
+export interface CatPt {
   /** Target, in px inside the size x size box. */
   x: number;
   y: number;
@@ -22,6 +22,8 @@ interface CatPt {
 
 export interface Cat {
   size: number;
+  /** Distance between two neighbouring particles. */
+  step: number;
   dot: number;
   pts: CatPt[];
 }
@@ -105,17 +107,50 @@ function tail(o: CanvasRenderingContext2D) {
   o.stroke();
 }
 
-function sample(size: number, step: number, paint: (o: CanvasRenderingContext2D) => void): number[][] {
-  const n = Math.max(8, Math.ceil(size));
+/** Paints part of the silhouette, in the text colour, on a canvas of its own: `size` CSS px square at `density` px per CSS px. */
+function sprite(size: number, density: number, paint: (o: CanvasRenderingContext2D) => void) {
   const off = document.createElement('canvas');
-  off.width = off.height = n;
+  off.width = off.height = Math.max(8, Math.ceil(size * density));
   const o = off.getContext('2d', { willReadFrequently: true });
-  if (!o) return [];
-  o.scale(size / 100, size / 100);
-  o.fillStyle = o.strokeStyle = '#fff';
+  if (!o) return null;
+  o.scale((size * density) / 100, (size * density) / 100);
+  o.fillStyle = o.strokeStyle = rgb(TEXT);
   o.lineCap = o.lineJoin = 'round';
   paint(o);
-  const px = o.getImageData(0, 0, n, n).data;
+  return off;
+}
+
+/** The silhouette as an image: the body, the tail (so it can swing on its own), or both. */
+export const catSprite = (size: number, density: number, part: 'body' | 'tail' | 'all') =>
+  sprite(size, density, part === 'body' ? body : part === 'tail' ? tail : (o) => (tail(o), body(o)));
+
+/** The inner rim of a sprite, `w` px wide: the shape minus the shape eroded. */
+export function rimOf(src: HTMLCanvasElement, w: number) {
+  const make = () => {
+    const c = document.createElement('canvas');
+    c.width = src.width;
+    c.height = src.height;
+    return c;
+  };
+  const eroded = make();
+  const rim = make();
+  const e = eroded.getContext('2d');
+  const r = rim.getContext('2d');
+  if (!e || !r) return src;
+  e.drawImage(src, 0, 0);
+  e.globalCompositeOperation = 'destination-in';
+  for (let i = 0; i < 8; i++) e.drawImage(src, Math.cos((i * TAU) / 8) * w, Math.sin((i * TAU) / 8) * w);
+  r.drawImage(src, 0, 0);
+  r.globalCompositeOperation = 'destination-out';
+  r.drawImage(eroded, 0, 0);
+  return rim;
+}
+
+function sample(size: number, step: number, paint: (o: CanvasRenderingContext2D) => void): number[][] {
+  const off = sprite(size, 1, paint);
+  const px = off?.getContext('2d')?.getImageData(0, 0, off.width, off.height).data;
+  if (!off || !px) return [];
+  const n = off.width;
   const out: number[][] = [];
   for (let row = 0, y = step / 2; y < n; y += step, row++) {
     for (let x = step / 2 + (row % 2 ? step / 2 : 0); x < n; x += step) {
@@ -125,9 +160,8 @@ function sample(size: number, step: number, paint: (o: CanvasRenderingContext2D)
   return out;
 }
 
-/** Samples the silhouette for a size x size box (CSS px). About 1100 particles whatever the size. */
-export function buildCat(size: number): Cat {
-  const step = Math.max(2, size / 62);
+/** Samples the silhouette for a size x size box (CSS px): about 1100 particles whatever the size, or one every `step` px. */
+export function buildCat(size: number, step = Math.max(2, size / 62)): Cat {
   const s = size / 100;
   const reach = 46 * s; // the tail tip is about this far from its root
   const found = [
@@ -144,10 +178,56 @@ export function buildCat(size: number): Cat {
     const r = Math.sqrt(1 - uy * uy);
     return { x, y, ux: Math.cos(golden * j) * r, uy, uz: Math.sin(golden * j) * r, r1: rnd(), r2: rnd(), tail: along };
   });
-  return { size, dot: Math.max(1.6, step * 0.56), pts };
+  return { size, step, dot: Math.max(1.6, step * 0.56), pts };
 }
 
 const bump = (x: number, at: number, width: number) => Math.exp(-Math.pow((x - at) / width, 2));
+
+/** Idle: how far the tail tip swings (radians). A slow sway, and every few seconds a quick flick. */
+export const tailSwing = (t: number) => 0.11 * Math.sin(t * 1.3) + 0.5 * bump(t % 5.2, 0.6, 0.14) - 0.3 * bump(t % 5.2, 0.9, 0.14);
+/** Idle: how open the eyes are (0..1). A blink every few seconds. */
+export const eyesOpen = (t: number) => 1 - bump(t % 4.3, 3.2, 0.09);
+
+/** Where a formed point sits (box at the origin) once the tail has swung: it bends more toward its tip. Returns [x, y]. */
+export function catPoint(p: CatPt, s: number, swing: number, out: number[]) {
+  out[0] = p.x;
+  out[1] = p.y;
+  if (!p.tail) return;
+  const a = swing * Math.pow(p.tail, 1.5);
+  const dx = p.x - TAIL_ROOT[0] * s;
+  const dy = p.y - TAIL_ROOT[1] * s;
+  out[0] = TAIL_ROOT[0] * s + dx * Math.cos(a) - dy * Math.sin(a);
+  out[1] = TAIL_ROOT[1] * s + dx * Math.sin(a) + dy * Math.cos(a);
+}
+
+/**
+ * The face, cut out of whatever is under it: eyes (`open` 0..1 blinks them, `look` -1..1 moves the pupils) and a nose.
+ * (x, y) is the top-left corner of the cat's box, `s` its size / 100.
+ */
+export function drawFace(ctx: CanvasRenderingContext2D, x: number, y: number, s: number, open: number, a: number, look = 0) {
+  if (a <= 0) return;
+  for (const [ex, ey, tilt] of EYES) {
+    ctx.fillStyle = rgb(BG, a);
+    ctx.beginPath();
+    ctx.ellipse(x + ex * s, y + ey * s, 5.2 * s, 4.2 * s, tilt, 0, TAU);
+    ctx.fill();
+    ctx.fillStyle = rgb(TEXT, a);
+    ctx.beginPath();
+    ctx.ellipse(x + ex * s, y + ey * s, 4 * s, Math.max(0.35, 3.1 * open) * s, tilt, 0, TAU);
+    ctx.fill();
+    ctx.fillStyle = rgb(BG, a);
+    ctx.beginPath();
+    ctx.ellipse(x + (ex + look * 1.9) * s, y + ey * s, 1.05 * s, Math.max(0.2, 2.7 * open) * s, 0, 0, TAU);
+    ctx.fill();
+  }
+  ctx.fillStyle = rgb(BG, a);
+  ctx.beginPath();
+  ctx.moveTo(x + 43.4 * s, y + 36.6 * s);
+  ctx.lineTo(x + 47.6 * s, y + 36.6 * s);
+  ctx.lineTo(x + 45.5 * s, y + 39.4 * s);
+  ctx.closePath();
+  ctx.fill();
+}
 
 /**
  * Draws the cat with its box's top-left corner at (x, y). `grow` (0..1) brings the sphere of
@@ -166,25 +246,15 @@ export function drawCat(ctx: CanvasRenderingContext2D, cat: Cat, x: number, y: n
   const sinY = Math.sin(ry);
   const cosX = Math.cos(rx);
   const sinX = Math.sin(rx);
-  // Idle: a slow sway, and every few seconds a quick flick of the tail and a blink.
-  const swing = calm ? 0.05 : 0.11 * Math.sin(t * 1.3) + 0.5 * bump(t % 5.2, 0.6, 0.14) - 0.3 * bump(t % 5.2, 0.9, 0.14);
-  const open = calm ? 1 : 1 - bump(t % 4.3, 3.2, 0.09);
-  const rootX = x + TAIL_ROOT[0] * s;
-  const rootY = y + TAIL_ROOT[1] * s;
+  const swing = calm ? 0.05 : tailSwing(t);
+  const at = [0, 0];
 
   let last = '';
   for (const p of pts) {
     const k = E.inOutCubic(cl(form * 1.5 - (p.x / size) * 0.3 - p.r1 * 0.2));
-    let tx = x + p.x;
-    let ty = y + p.y;
-    if (p.tail) {
-      // The tail bends more toward its tip.
-      const a = swing * Math.pow(p.tail, 1.5);
-      const dx = tx - rootX;
-      const dy = ty - rootY;
-      tx = rootX + dx * Math.cos(a) - dy * Math.sin(a);
-      ty = rootY + dx * Math.sin(a) + dy * Math.cos(a);
-    }
+    catPoint(p, s, swing, at);
+    let tx = x + at[0];
+    let ty = y + at[1];
     if (!calm) {
       // The dots never sit completely still.
       tx += Math.sin(t * 1.7 + p.r1 * TAU) * 0.45;
@@ -206,28 +276,6 @@ export function drawCat(ctx: CanvasRenderingContext2D, cat: Cat, x: number, y: n
     ctx.fillRect(px - sz / 2, py - sz / 2, sz, sz);
   }
 
-  // The face arrives last: eyes (they blink) and a nose, cut out of the dots.
-  const face = cl((form - 0.86) / 0.14) * grow;
-  if (face <= 0) return;
-  for (const [ex, ey, tilt] of EYES) {
-    ctx.fillStyle = rgb(BG, face);
-    ctx.beginPath();
-    ctx.ellipse(x + ex * s, y + ey * s, 5.2 * s, 4.2 * s, tilt, 0, TAU);
-    ctx.fill();
-    ctx.fillStyle = rgb(TEXT, face);
-    ctx.beginPath();
-    ctx.ellipse(x + ex * s, y + ey * s, 4 * s, Math.max(0.35, 3.1 * open) * s, tilt, 0, TAU);
-    ctx.fill();
-    ctx.fillStyle = rgb(BG, face);
-    ctx.beginPath();
-    ctx.ellipse(x + ex * s, y + ey * s, 1.05 * s, Math.max(0.2, 2.7 * open) * s, 0, 0, TAU);
-    ctx.fill();
-  }
-  ctx.fillStyle = rgb(BG, face);
-  ctx.beginPath();
-  ctx.moveTo(x + 43.4 * s, y + 36.6 * s);
-  ctx.lineTo(x + 47.6 * s, y + 36.6 * s);
-  ctx.lineTo(x + 45.5 * s, y + 39.4 * s);
-  ctx.closePath();
-  ctx.fill();
+  // The face arrives last, cut out of the dots.
+  drawFace(ctx, x, y, s, calm ? 1 : eyesOpen(t), cl((form - 0.86) / 0.14) * grow);
 }

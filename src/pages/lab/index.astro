@@ -4,6 +4,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
 import TopBar from '../../components/TopBar.astro';
 import BootScene from '../../components/BootScene.astro';
 import { getContent } from '../../data/content';
+import { INTROS, DEFAULT_INTRO } from '../../components/machine/scene';
 
 const content = getContent('en');
 const label = content.promptUser;
@@ -13,6 +14,13 @@ const experiments = [
   { href: '/lab/shell/', name: 'shell/', note: 'the whole site as a working terminal' },
   { href: '/lab/tictactoe/', name: 'tictactoe/', note: 'play minimax and watch it think' },
 ];
+const NOTES: Record<(typeof INTROS)[number], string> = {
+  sit: 'particles: it sits, flicks its tail, blinks',
+  walk: 'it walks in, sits down, looks at you',
+  silhouette: 'solid: outline traced, filled by the scan line',
+  pounce: 'it stalks the red marker and jumps on it',
+  peek: 'ears, then eyes, over the edge of the frame',
+};
 ---
 
 <BaseLayout locale="en" title="lab — motion" description="Motion experiments.">
@@ -26,6 +34,20 @@ const experiments = [
             <a href={experiment.href}>
               <span class="yr">{experiment.name}</span>
               {experiment.note}
+            </a>
+          ))
+        }
+      </div>
+    </section>
+    <section>
+      <p class="prompt">$ ls intro/ <span class="comment"># intro variants: each opens the home and replays the intro with that cat</span></p>
+      <div class="posts">
+        {
+          INTROS.map((name) => (
+            <a href={`/?intro=${name}`}>
+              <span class="yr">{name}</span>
+              {NOTES[name]}
+              {name === DEFAULT_INTRO && ' (default)'}
             </a>
           ))
         }

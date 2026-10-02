@@ -7,8 +7,35 @@ import {
   buildStreets, cl, dash as drawDash, decode, drawStreets, entPos as streetPos, font, hash, lerp, mulberry32, pad, rgb, trunc,
   type Ent, type RGB, type Streets,
 } from './draw';
-import { buildCat } from './cat';
+import { buildCat, catPoint, catSprite, drawFace, eyesOpen, rimOf, tailSwing } from './cat';
+import { BONES, POUNCE, buildRig, newPose, pouncePose, rigPoint, solve, walkPose } from './catrig';
 import type { SceneCopy } from './copy';
+
+/** What the particles are before they resolve into the handle. `?intro=<name>` picks one. */
+export const INTROS = ['sit', 'walk', 'silhouette', 'pounce', 'peek'] as const;
+export type IntroName = (typeof INTROS)[number];
+/** The one that plays when nothing is asked for. */
+export const DEFAULT_INTRO: IntroName = 'sit';
+export const introName = (s: string | null | undefined): IntroName => (INTROS as readonly string[]).includes(s ?? '') ? (s as IntroName) : DEFAULT_INTRO;
+/** Per variant: when (timeline seconds) the cat starts resolving into the handle, and the seconds its cat phase adds to the home cut. */
+const VARIANT: Record<IntroName, { morph: number; extra: number }> = {
+  sit: { morph: 8.6, extra: 0 },
+  walk: { morph: 8.75, extra: 1.4 },
+  silhouette: { morph: 8.6, extra: 0.3 },
+  pounce: { morph: 8.56, extra: 0.9 },
+  peek: { morph: 8.6, extra: 0.5 },
+};
+/**
+ * Home time -> timeline time for the home's cut: the same scenes, cut tighter (boot, sweep,
+ * acquire, identify). A variant that needs room gets it in its cat phase, played closer to real time.
+ */
+export function homeCut(name: IntroName): number[][] {
+  const { morph, extra } = VARIANT[name];
+  const rate = 4 / 3;
+  const at = 4.7 + (morph - 6.5) / rate + extra;
+  const end = at + (10.5 - morph) / rate;
+  return [[0, 0], [2, 2.5], [4.7, 6.5], [at, morph], [end, 10.5], [end + 3.5, CUT_END]];
+}
 
 export interface MachineData {
   handle: string;
@@ -30,6 +57,8 @@ export interface MachineOptions {
   total?: number;
   /** Still frame: every line resolved, never caught mid-decode. */
   calm?: boolean;
+  /** Which cat opens ACQUIRE. */
+  intro?: IntroName;
 }
 
 export interface Machine {
@@ -46,10 +75,8 @@ export const LOOP = 12; // idle period: every idle motion divides this
 export const CUT_END = 14;
 const FPS = 30;
 
+/** A particle of the handle. Where it sits in the cat before that is the variant's business. */
 interface Pt {
-  /** Where the particle sits in the cat silhouette, before it resolves into the handle. */
-  sx: number;
-  sy: number;
   tx: number;
   ty: number;
   r1: number;
@@ -63,6 +90,8 @@ export async function createMachine(cv: HTMLCanvasElement, data: MachineData, op
   const c = options.copy;
   const total = options.total ?? INTRO;
   const calm = options.calm ?? false;
+  const variant = options.intro ?? DEFAULT_INTRO;
+  const MORPH = VARIANT[variant].morph;
 
   await Promise.all([
     document.fonts.load('400 20px "IBM Plex Mono"'),
@@ -117,6 +146,7 @@ export async function createMachine(cv: HTMLCanvasElement, data: MachineData, op
   let tracked: number[] = [];
   let idleTracked: number[] = [];
   let pts: Pt[] = [];
+  let act: Act | null = null;
   let box = { cx: 0, cy: 0, w: 0, h: 0 };
   let dotPattern: CanvasPattern | null = null;
   let scanPattern: CanvasPattern | null = null;
@@ -272,6 +302,285 @@ export async function createMachine(cv: HTMLCanvasElement, data: MachineData, op
   const drawMap = (t: number, a: number) => drawStreets(ctx, map, t, a, W, H);
 
   // ---- particles: a cat that resolves into the handle ----
+  /** The cat phase of ACQUIRE. Every variant is a pure function of time and hands the same particles to the handle. */
+  interface Act {
+    /** Particle size while it is part of the cat. */
+    dot: number;
+    /** Sets up time t; `place` then answers for that frame. */
+    frame: (t: number) => void;
+    /** Writes particle i's position into `at`; returns its opacity. */
+    place: (i: number) => number;
+    /** Drawn under / over the particles. `a` goes to 0 as they leave for the handle. */
+    under?: (t: number, a: number) => void;
+    over?: (t: number, a: number) => void;
+  }
+  const at = [0, 0];
+  /** Which of `len` samples particle i takes: every sample is used, evenly, whether there are more particles or more samples. */
+  const pick = (i: number, len: number) => Math.floor((i * len) / pts.length) % len;
+  /** The sitting cat of cat.ts, sampled finely enough to use every particle. */
+  const denseCat = (size: number, n: number) => buildCat(size, Math.max(1.5, size / (62 * Math.sqrt((0.9 * n) / 1100))));
+
+  /** sit: the cat grows out of the middle of the box, sits there, flicks its tail and blinks while it is scanned. */
+  function sitAct(n: number): Act {
+    const size = Math.min(box.h * 0.94, box.w * 0.7);
+    const cat = denseCat(size, n);
+    const s = size / 100;
+    const x0 = box.cx - size / 2;
+    const y0 = box.cy - size / 2;
+    let grow = 0;
+    let swing = 0;
+    let now = 0;
+    return {
+      dot: cl(cat.step * 0.72, 1.8, 2.8),
+      frame(t) {
+        grow = E.outExpo(P(t, 6.5, 7.2));
+        swing = tailSwing(t - 7.25);
+        now = t;
+      },
+      place(i) {
+        const p = cat.pts[pick(i, cat.pts.length)];
+        catPoint(p, s, swing, at);
+        const k = grow * (1 + 0.006 * Math.sin(now * 3 + p.r1 * 6));
+        at[0] = box.cx + (x0 + at[0] - box.cx) * k;
+        at[1] = box.cy + (y0 + at[1] - box.cy) * k;
+        return 1;
+      },
+      over: (t, a) => drawFace(ctx, x0, y0, s, eyesOpen(t - 5.12), a * P(t, 7.05, 7.3)),
+    };
+  }
+
+  /** silhouette: no dots. Its outline is traced, the scan line fills it in, and only then does it break into particles. */
+  function silhouetteAct(n: number): Act {
+    const size = Math.min(box.h * 0.94, box.w * 0.7);
+    const cat = denseCat(size, n);
+    const s = size / 100;
+    const x0 = box.cx - size / 2;
+    const y0 = box.cy - size / 2;
+    const whole = catSprite(size, dpr, 'all');
+    const bodyS = catSprite(size, dpr, 'body');
+    const tailS = catSprite(size, dpr, 'tail');
+    const rim = whole && rimOf(whole, 1.6 * dpr);
+    let swing = 0;
+    let on = 0;
+    return {
+      dot: cat.step * 1.08,
+      frame(t) {
+        swing = t < 8 ? 0 : tailSwing(t - 7.55) * 0.5;
+        on = t >= MORPH - 0.03 ? 1 : 0;
+      },
+      place(i) {
+        const p = cat.pts[pick(i, cat.pts.length)];
+        catPoint(p, s, swing, at);
+        at[0] += x0;
+        at[1] += y0;
+        return on;
+      },
+      under(t) {
+        const solid = 1 - P(t, MORPH - 0.03, MORPH + 0.1);
+        if (!rim || !bodyS || !tailS || solid <= 0) return;
+        ctx.save();
+        ctx.globalAlpha = solid;
+        const trace = E.inOutCubic(P(t, 6.6, 7.25));
+        if (trace > 0 && t < 8) {
+          ctx.save();
+          ctx.beginPath();
+          ctx.moveTo(box.cx, box.cy);
+          ctx.arc(box.cx, box.cy, size, -Math.PI / 2, -Math.PI / 2 + TAU * trace);
+          ctx.closePath();
+          ctx.clip();
+          ctx.drawImage(rim, x0, y0, size, size);
+          ctx.restore();
+        }
+        if (t >= 7) {
+          // The first pass of the scan line is what fills it.
+          ctx.beginPath();
+          ctx.rect(x0 - 4, box.cy - box.h / 2, size + 8, t < 8 ? (t - 7) * box.h : box.h);
+          ctx.clip();
+          const rx = x0 + 61 * s;
+          const ry = y0 + 89 * s;
+          ctx.translate(rx, ry);
+          ctx.rotate(swing);
+          ctx.drawImage(tailS, x0 - rx, y0 - ry, size, size);
+          ctx.rotate(-swing);
+          ctx.translate(-rx, -ry);
+          ctx.drawImage(bodyS, x0, y0, size, size);
+          drawFace(ctx, x0, y0, s, eyesOpen(t - 5.12), 1);
+        }
+        ctx.restore();
+      },
+    };
+  }
+
+  /** peek: ears over the bottom edge of the frame, then eyes that look both ways, then the whole head. */
+  function peekAct(n: number): Act {
+    const size = Math.min(box.h * 1.5, box.w * 1.2);
+    // Only the head and shoulders ever show: spend every particle there.
+    const cat = denseCat(size, n * 1.9);
+    const seen = cat.pts.filter((p) => !p.tail && p.y < size * 0.66);
+    const s = size / 100;
+    const x0 = box.cx - size * 0.455;
+    const floor = box.cy + box.h / 2;
+    const hidden = (box.h * 0.9) / size;
+    let y0 = 0;
+    const rise = (t: number) =>
+      lerp(lerp(lerp(hidden, 0.42, E.outCubic(P(t, 6.6, 6.95))), 0.25, E.inOutCubic(P(t, 7.25, 7.5))), 0, E.outBack(P(t, 8.02, 8.34), 2.2));
+    const top = (t: number) => box.cy - box.h / 2 + box.h * 0.1 - size * 0.04 + rise(t) * size;
+    return {
+      dot: cl(cat.step * 0.72, 1.8, 2.8),
+      frame(t) {
+        y0 = top(t);
+      },
+      place(i) {
+        const p = seen[pick(i, seen.length)];
+        at[0] = x0 + p.x;
+        at[1] = y0 + p.y;
+        return at[1] < floor - 1 ? 1 : 0;
+      },
+      under(_t, a) {
+        ctx.fillStyle = rgb(FAINT, a);
+        ctx.fillRect(box.cx - box.w / 2, floor, box.w, 1);
+      },
+      over(t, a) {
+        // First to the left, then to the right, then at you.
+        const look = -E.inOutCubic(P(t, 7.5, 7.62)) + 2 * E.inOutCubic(P(t, 7.76, 7.9)) - E.inOutCubic(P(t, 8.02, 8.14));
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(box.cx - box.w / 2, box.cy - box.h / 2 - 40, box.w, box.h + 39);
+        ctx.clip();
+        drawFace(ctx, x0, y0, s, eyesOpen(t - 5.24), a, look);
+        ctx.restore();
+      },
+    };
+  }
+
+  /** The rig's stage: where rig x = 0 and the ground are on screen, and how big a rig unit is. */
+  function stage(n: number, sc: number, ox: number, pose: (p: ReturnType<typeof newPose>, t: number) => void, edge: boolean) {
+    const rig = buildRig(n);
+    const p = newPose();
+    const B = new Float32Array(BONES * 5);
+    const gy = box.cy + box.h * 0.42;
+    const left = box.cx - box.w / 2;
+    let fade = 0;
+    return {
+      p,
+      gy,
+      dot: cl(rig.step * sc * 0.8, 1.8, 2.8),
+      frame(t: number) {
+        pose(p, t - 6.5);
+        solve(p, B);
+        fade = P(t, 6.5, 6.75);
+      },
+      place(i: number) {
+        const j = i % rig.n;
+        rigPoint(rig, B, p, j, at);
+        at[0] = ox + at[0] * sc;
+        at[1] = gy - at[1] * sc;
+        // It comes in through the left edge of the frame.
+        return rig.shade[j] * fade * (edge ? P(at[0], left - 6, left + 22) : 1);
+      },
+      /** The ground it stands on: a measuring line with a tick every ten units. */
+      ground(a: number) {
+        ctx.fillStyle = rgb(FAINT, a * fade);
+        ctx.fillRect(left + 10, gy, box.w - 20, 1);
+        for (let x = ox % (10 * sc); x < box.w - 10; x += 10 * sc) if (x > 10) ctx.fillRect(left + x, gy, 1, 5);
+      },
+    };
+  }
+
+  /** walk: it walks in from the left in profile, stops, sits down and turns its head to the camera. */
+  function walkAct(n: number): Act {
+    const sc = Math.min((box.h * 0.84) / 67, box.w / 84);
+    const ox = box.cx - 4 * sc;
+    const st = stage(n, sc, ox, walkPose, true);
+    return {
+      dot: st.dot,
+      frame: st.frame,
+      place: st.place,
+      under: (_t, a) => st.ground(a),
+      over(t, a) {
+        const hx = ox + st.p.headX * sc;
+        const hy = st.gy - st.p.headY * sc;
+        const side = a * (1 - P(st.p.turn, 0, 0.45)) * P(hx, box.cx - box.w / 2, box.cx - box.w / 2 + 30);
+        if (side > 0) {
+          // In profile: one eye.
+          const c = Math.cos(st.p.headA);
+          const sn = Math.sin(st.p.headA);
+          ctx.fillStyle = rgb(BG, side);
+          ctx.beginPath();
+          ctx.ellipse(hx + (3.3 * c - 1.5 * sn) * sc, hy - (3.3 * sn + 1.5 * c) * sc, 1.25 * sc, 0.95 * sc, -st.p.headA, 0, TAU);
+          ctx.fill();
+        }
+        drawFace(ctx, hx - 45.5 * (sc / 2), hy - 31 * (sc / 2), sc / 2, eyesOpen(t - 5.44), a * P(st.p.turn, 0.6, 1));
+      },
+    };
+  }
+
+  /** pounce: crouched, it watches the red marker dart about, wiggles, and jumps on it; the landing is the handle. */
+  function pounceAct(n: number): Act {
+    const sc = Math.min((box.h * 0.8) / 50, box.w / 128);
+    const ox = box.cx + 22 * sc;
+    // The marker's stops (seconds, rig x, rig y): it ends where the forepaws will land.
+    const stops = [
+      [0.15, 30, 12],
+      [0.5, 16, 5],
+      [0.82, 34, 17],
+      [1.12, 20, 9],
+      [1.4, POUNCE.to + 10, 2],
+    ];
+    const dot = (tl: number) => {
+      let x = stops[0][1];
+      let y = stops[0][2];
+      for (let i = 1; i < stops.length; i++) {
+        const k = E.inOutCubic(P(tl, stops[i][0] - 0.16, stops[i][0]));
+        x = lerp(x, stops[i][1], k);
+        y = lerp(y, stops[i][2], k);
+      }
+      return [x, y];
+    };
+    const st = stage(n, sc, ox, (p, tl) => pouncePose(p, tl, ...(dot(tl) as [number, number])), false);
+    return {
+      dot: st.dot,
+      frame: st.frame,
+      place: st.place,
+      under: (_t, a) => st.ground(a),
+      over(t, a) {
+        const tl = t - 6.5;
+        const [x, y] = dot(tl);
+        const px = ox + x * sc;
+        const py = st.gy - y * sc;
+        const hx = ox + st.p.headX * sc;
+        const hy = st.gy - st.p.headY * sc;
+        const c = Math.cos(st.p.headA);
+        const sn = Math.sin(st.p.headA);
+        ctx.fillStyle = rgb(BG, a);
+        ctx.beginPath();
+        ctx.ellipse(hx + (3.3 * c - 1.5 * sn) * sc, hy - (3.3 * sn + 1.5 * c) * sc, 1.25 * sc, 0.95 * sc, -st.p.headA, 0, TAU);
+        ctx.fill();
+        // The marker: the same red square the sweep put on the subject.
+        const on = P(tl, 0.1, 0.2) * (1 - P(tl, POUNCE.land - 0.03, POUNCE.land));
+        if (on > 0) {
+          const pulse = 0.5 + 0.5 * Math.sin(tl * 22);
+          ctx.fillStyle = rgb(RED, 0.18 * on);
+          ctx.beginPath();
+          ctx.arc(px, py, 9 + 3 * pulse, 0, TAU);
+          ctx.fill();
+          ctx.fillStyle = rgb(RED, on);
+          ctx.fillRect(px - 2.5, py - 2.5, 5, 5);
+        }
+        const hit = P(tl, POUNCE.land - 0.03, POUNCE.land + 0.4);
+        if (hit > 0 && hit < 1) {
+          ctx.strokeStyle = rgb(RED, 0.7 * (1 - hit));
+          ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          ctx.arc(px, py, 6 + E.outExpo(hit) * 90, 0, TAU);
+          ctx.stroke();
+        }
+      },
+    };
+  }
+
+  const ACTS: Record<IntroName, (n: number) => Act> = { sit: sitAct, walk: walkAct, silhouette: silhouetteAct, pounce: pounceAct, peek: peekAct };
+
   function buildParticles() {
     box = wide
       ? { cx: W * 0.355, cy: (top + bot) / 2 - 6, w: W * 0.47, h: Math.min((bot - top) * 0.56, W * 0.26) }
@@ -303,20 +612,11 @@ export async function createMachine(cv: HTMLCanvasElement, data: MachineData, op
       [found[i], found[j]] = [found[j], found[i]];
     }
     const n = wide ? 3400 : 1700;
-    const cat = buildCat(Math.min(box.h * 0.94, box.w * 0.7));
     pts = Array.from({ length: n }, (_, i) => {
       const f = found[i % found.length];
-      // Stride through the cat so every part of it is covered even when it has fewer points than n.
-      const s = cat.pts[(i * 7) % cat.pts.length];
-      return {
-        sx: box.cx - cat.size / 2 + s.x,
-        sy: box.cy - cat.size / 2 + s.y,
-        tx: box.cx - ow / 2 + f[0],
-        ty: box.cy - oh / 2 + f[1],
-        r1: rnd(),
-        r2: rnd(),
-      };
+      return { tx: box.cx - ow / 2 + f[0], ty: box.cy - oh / 2 + f[1], r1: rnd(), r2: rnd() };
     });
+    act = ACTS[variant](n);
   }
 
   // =====================================================================
@@ -515,24 +815,30 @@ export async function createMachine(cv: HTMLCanvasElement, data: MachineData, op
     const state: RGB = locked ? CYAN : t >= 7 ? AMBER : RED;
     const label = locked ? c.confirmed : t >= 7 ? c.analyzing : c.unidentified;
 
-    // Particles.
-    const grow = E.outExpo(P(t, 6.5, 7.2));
+    // Particles: the cat, then the handle. They leave left to right, each on a small arc.
     const sweepX = lerp(box.cx - w * 0.6, box.cx + w * 0.6, E.inOutCubic(P(t, 10, 10.45)));
-    let last = '';
-    for (let i = 0; i < pts.length; i++) {
-      const p = pts[i];
-      // The cat grows out of the centre of the box, then breathes a little while it is scanned.
-      const breathe = 1 + 0.012 * Math.sin(t * 3 + p.r1 * 6);
-      const del = ((p.tx - (cx - w / 2)) / w) * 0.45 + p.r1 * 0.15;
-      const k = E.inOutCubic(P(t, 8 + del, 8.75 + del));
-      const arc = Math.sin(k * Math.PI);
-      const x = lerp(cx + (p.sx - cx) * grow * breathe, p.tx, k) + arc * (p.r1 - 0.5) * 120;
-      const y = lerp(cy + (p.sy - cy) * grow * breathe, p.ty, k) - arc * (30 + p.r2 * 90) * (p.r2 < 0.5 ? 1 : -1);
-      const sz = lerp(1.8, 2, k);
-      const bucket = Math.round(lerp(0.6 + p.r2 * 0.4, 1, k) * 5) / 5;
-      const style = locked && x < sweepX ? rgb(CYAN) : rgb(k > 0.5 ? TEXT : BODY, bucket);
-      if (style !== last) ctx.fillStyle = last = style;
-      ctx.fillRect(x - sz / 2, y - sz / 2, sz, sz);
+    const pace = Math.min(1, (9.86 - MORPH) / 1.14);
+    const leave = 1 - P(t, MORPH, MORPH + 0.16);
+    if (act) {
+      act.frame(t);
+      act.under?.(t, leave);
+      let last = '';
+      for (let i = 0; i < pts.length; i++) {
+        const p = pts[i];
+        const a = act.place(i);
+        const del = MORPH + (((p.tx - (cx - w / 2)) / w) * 0.4 + p.r1 * 0.12) * pace;
+        const k = E.inOutCubic(P(t, del, del + 0.62 * pace));
+        const alpha = Math.round(lerp(a, 1, k) * 5) / 5;
+        if (alpha <= 0) continue;
+        const arc = Math.sin(k * Math.PI);
+        const x = lerp(at[0], p.tx, k) + arc * (p.r1 - 0.5) * 120;
+        const y = lerp(at[1], p.ty, k) - arc * (30 + p.r2 * 90) * (p.r2 < 0.5 ? 1 : -1);
+        const sz = lerp(act.dot, 2, k);
+        const style = locked && x < sweepX ? rgb(CYAN) : rgb(TEXT, alpha);
+        if (style !== last) ctx.fillStyle = last = style;
+        ctx.fillRect(x - sz / 2, y - sz / 2, sz, sz);
+      }
+      act.over?.(t, leave);
     }
 
     // Box, scan line, tag.

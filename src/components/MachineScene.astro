@@ -85,15 +85,17 @@ const data = {
 </style>
 
 <script>
-  import { createMachine, INTRO, LOOP, type MachineData } from './machine/scene';
+  import { createMachine, introName, INTRO, LOOP, type MachineData } from './machine/scene';
   import type { SceneCopy } from './machine/copy';
 
   async function init(cv: HTMLCanvasElement) {
-    const frozen = new URLSearchParams(location.search).get('seek');
+    const params = new URLSearchParams(location.search);
+    const frozen = params.get('seek');
     const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
     const machine = await createMachine(cv, JSON.parse(cv.dataset.machine ?? '{}') as MachineData, {
       copy: JSON.parse(cv.dataset.copy ?? '{}') as SceneCopy,
       calm: still && frozen === null,
+      intro: introName(params.get('intro')),
     });
     if (!machine) return;
     // Reduced motion gets the settled idle frame, once.

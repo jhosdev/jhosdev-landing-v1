@@ -163,7 +163,7 @@ const alternates = [
       } catch (e) {}
       var still = matchMedia('(prefers-reduced-motion: reduce)').matches;
       var focus = sections.indexOf(hash) >= 0;
-      var intro = q.has('seek') || q.has('intro') || (!still && !seen && !focus && !q.has('move') && !q.has('run') && !q.has('cat'));
+      var intro = q.has('seek') || (q.has('intro') && !still) || (!still && !seen && !focus && !q.has('move') && !q.has('run') && !q.has('cat'));
       d.classList.add('mc-js');
       if (!still) d.classList.add('mc-arm');
       if (intro) d.classList.add('mc-intro-on');
