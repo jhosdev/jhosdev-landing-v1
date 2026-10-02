@@ -8,7 +8,7 @@ import {
   type Ent, type RGB, type Streets,
 } from './draw';
 import { sampleSolid } from './cat';
-import { DEFAULT_INTRO, VARIANT, catPhase, type IntroName } from './catphase';
+import { CAT_AT, CUT_RATE, DEFAULT_INTRO, VARIANT, catPhase, type IntroName } from './catphase';
 import type { SceneCopy } from './copy';
 
 export { INTROS, DEFAULT_INTRO, introName, type IntroName } from './catphase';
@@ -18,9 +18,8 @@ export { INTROS, DEFAULT_INTRO, introName, type IntroName } from './catphase';
  */
 export function homeCut(name: IntroName): number[][] {
   const { morph, extra } = VARIANT[name];
-  const rate = 4 / 3;
-  const at = 4.7 + (morph - 6.5) / rate + extra;
-  const end = at + (10.5 - morph) / rate;
+  const at = 4.7 + (morph - CAT_AT) / CUT_RATE + extra;
+  const end = at + (10.5 - morph) / CUT_RATE;
   return [[0, 0], [2, 2.5], [4.7, 6.5], [at, morph], [end, 10.5], [end + 3.5, CUT_END]];
 }
 

@@ -5,7 +5,7 @@
 // functions of time, like everything else the Machine draws.
 import { BG, E, FAINT, P, RED, TAU, TEXT, lerp, rgb } from './draw';
 import { eyesOpen, fillShape, paintCat, rimOf, tailSwing } from './cat';
-import { POUNCE, bust, newPose, newShape, pouncePose, skin, walkPose } from './catrig';
+import { POUNCE, bust, newPose, newShape, paws, pouncePose, skin, walkPose } from './catrig';
 
 /** What the particles are before they resolve into the handle. `?intro=<name>` picks one. */
 export const INTROS = ['sit', 'walk', 'silhouette', 'pounce', 'peek'] as const;
@@ -23,6 +23,13 @@ export const VARIANT: Record<IntroName, { morph: number; extra: number }> = {
 };
 /** Timeline second the cat phase starts (ACQUIRE). */
 export const CAT_AT = 6.5;
+/** The home plays the intro cut tighter (4/3 speed), and gives a variant's cat phase `extra` seconds more. */
+export const CUT_RATE = 4 / 3;
+/** How fast the home plays a variant's cat phase: timeline seconds per second. */
+export const homeSpeed = (name: IntroName) => {
+  const { morph, extra } = VARIANT[name];
+  return (morph - CAT_AT) / ((morph - CAT_AT) / CUT_RATE + extra);
+};
 
 /** The frame the cat lives in (CSS px): its centre and size. `wide` is the desktop layout. */
 export interface CatBox {
@@ -101,25 +108,40 @@ function silhouette(box: CatBox, dpr: number): CatPhase {
   };
 }
 
-/** peek: ears over the bottom edge of the frame, then eyes that look both ways, then the whole head. */
+const bump = (t: number, at: number, w: number) => Math.exp(-(((t - at) / w) ** 2));
+
+/**
+ * peek: ears over the bottom edge of the frame (one twitches), then eyes that look one way and the other, the head
+ * leaning after them; it ducks a hair and pops up with its paws hooked over the edge, then tilts its head at you.
+ */
 function peek(box: CatBox): CatPhase {
   const sc = Math.min(box.h * 0.6, box.w * 0.48) / 11.2;
   const floor = box.cy + box.h / 2;
-  // How high the middle of the skull is over the edge, in head units: ears, then eyes, then all of it.
+  const front = newShape();
+  // How high the middle of the skull is over the edge, in head units: ears, then eyes, a small dip, then all of it.
   const rise = (t: number) =>
-    lerp(lerp(lerp(-14, -5.3, E.outCubic(P(t, 6.6, 6.95))), 1.7, E.inOutCubic(P(t, 7.25, 7.5))), 8, E.outBack(P(t, 8.02, 8.34), 2.2));
+    lerp(lerp(lerp(-14, -5.3, E.outCubic(P(t, 6.6, 6.95))), 1.7, E.inOutCubic(P(t, 7.25, 7.5))), 8, E.outBack(P(t, 8.02, 8.32), 2)) -
+    0.7 * bump(t, 7.96, 0.05);
   return {
     paint(o, t) {
-      // First to the left, then to the right, then at you.
+      // First to the left, then to the right, then at you; the head leans a little after the eyes, then tilts, curious.
       const look = -E.inOutCubic(P(t, 7.5, 7.62)) + 2 * E.inOutCubic(P(t, 7.76, 7.9)) - E.inOutCubic(P(t, 8.02, 8.14));
+      const roll = -0.07 * (-E.inOutCubic(P(t, 7.54, 7.7)) + 2 * E.inOutCubic(P(t, 7.8, 7.98)) - E.inOutCubic(P(t, 8.04, 8.2))) + 0.12 * E.outBack(P(t, 8.3, 8.5), 1.4);
+      // Ear twitches: the left one while only the ears show, the right one as the head settles.
+      const earA = 0.45 * bump(t, 7.08, 0.035) + 0.2 * bump(t, 7.16, 0.03);
+      const earB = 0.4 * bump(t, 8.47, 0.035);
+      const grip = E.outBack(P(t, 8.08, 8.28), 1.6);
       const y = rise(t);
-      const px = (x: number) => box.cx + x * sc;
-      const py = (dy: number) => floor - (y + dy) * sc;
+      const c = Math.cos(roll);
+      const sn = Math.sin(roll);
+      // A point given in head units around the middle of the skull, tilted with the head.
+      const hx = (x: number, dy: number) => box.cx + (x * c - dy * sn) * sc;
+      const hy = (x: number, dy: number) => floor - (y + x * sn + dy * c) * sc;
       o.save();
       o.beginPath();
       o.rect(box.cx - box.w / 2, box.cy - box.h / 2 - 60, box.w, box.h + 59);
       o.clip();
-      bust(shape, 0, y, 1);
+      bust(shape, 0, y, 1, roll, earA, earB);
       o.strokeStyle = rgb(TEXT);
       o.lineWidth = Math.max(1, 0.13 * sc);
       o.lineCap = 'round';
@@ -130,19 +152,26 @@ function peek(box: CatBox): CatPhase {
           [-2, -2],
           [-2.6, -3.6],
         ]) {
-          o.moveTo(px(side * 4.4), py(from));
-          o.lineTo(px(side * 9.4), py(to));
+          o.moveTo(hx(side * 4.4, from), hy(side * 4.4, from));
+          o.lineTo(hx(side * 9.4, to), hy(side * 9.4, to));
         }
       }
       o.stroke();
       fillShape(o, shape, box.cx, floor, sc, eyesOpen(t - 5.24), rgb(TEXT), look);
       o.fillStyle = rgb(BG);
       o.beginPath();
-      o.moveTo(px(-0.6), py(-1.5));
-      o.lineTo(px(0.6), py(-1.5));
-      o.lineTo(px(0), py(-2.3));
+      o.moveTo(hx(-0.6, -1.5), hy(-0.6, -1.5));
+      o.lineTo(hx(0.6, -1.5), hy(0.6, -1.5));
+      o.lineTo(hx(0, -2.3), hy(0, -2.3));
       o.closePath();
       o.fill();
+      if (grip > 0) {
+        // The paws, in front of the chest: a rim of the background (a couple of pixels at any size), then the paws.
+        paws(front, 0, 1, grip, 2.5 / sc);
+        fillShape(o, front, box.cx, floor, sc, 1, rgb(BG));
+        paws(front, 0, 1, grip);
+        fillShape(o, front, box.cx, floor, sc);
+      }
       o.restore();
     },
     under(o, _t, a) {
@@ -183,9 +212,10 @@ function walk(box: CatBox): CatPhase {
 /** pounce: crouched, it watches the red marker dart about, wiggles, and jumps on it; the landing is the handle. */
 function pounce(box: CatBox): CatPhase {
   const { wide } = box;
-  // A narrow frame keeps the cat large and lets the tail hang out of it.
-  const sc = Math.min((box.h * 0.8) / 52, box.w / (wide ? 112 : 92));
-  const ox = box.cx + (wide ? 22 : 12.5) * sc;
+  // A narrow frame starts it closer to the marker (a shorter leap), so the whole cat, tail and all, stays in it.
+  const from = wide ? POUNCE.from : -24;
+  const sc = Math.min((box.h * 0.8) / 52, box.w / (wide ? 112 : 110));
+  const ox = box.cx + (wide ? 22 : 20) * sc;
   const gy = box.cy + box.h * 0.42;
   // The marker's stops (seconds, rig x, rig y): it ends where the forepaws will land.
   const stops = [
@@ -208,7 +238,7 @@ function pounce(box: CatBox): CatPhase {
   return {
     paint(o, t) {
       const [x, y] = dot(t - 6.5);
-      pouncePose(pose, t - 6.5, x, y);
+      pouncePose(pose, t - 6.5, x, y, from);
       skin(pose, shape);
       o.save();
       o.globalAlpha *= P(t, 6.5, 6.75);

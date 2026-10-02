@@ -115,8 +115,8 @@ const NOTES: Record<(typeof INTROS)[number], string> = {
 
 <script>
   // Each tile loops its variant's cat phase, drawn by the same code the intro uses (catphase.ts):
-  // from the cat entering to the moment it starts resolving into the handle, a short hold, again.
-  import { CAT_AT, VARIANT, catPhase, introName, type CatPhase } from '../../components/machine/catphase';
+  // from the cat entering to the moment it starts resolving into the handle, a short hold, again, at the home's speed.
+  import { CAT_AT, VARIANT, catPhase, homeSpeed, introName, type CatPhase } from '../../components/machine/catphase';
   import { buildCat, drawCat, type Cat } from '../../components/machine/cat';
   import { BG, E, P, rgb } from '../../components/machine/draw';
 
@@ -166,8 +166,10 @@ const NOTES: Record<(typeof INTROS)[number], string> = {
       return;
     }
     if (!tile.phase) return;
-    const morph = VARIANT[introName(tile.name)].morph;
-    const t = still ? morph : CAT_AT + Math.min(s % (morph - CAT_AT + HOLD), morph - CAT_AT);
+    // At the speed the home plays it.
+    const name = introName(tile.name);
+    const len = (VARIANT[name].morph - CAT_AT) / homeSpeed(name);
+    const t = still ? VARIANT[name].morph : CAT_AT + Math.min(s % (len + HOLD), len) * homeSpeed(name);
     tile.phase.under?.(ctx, t, 1);
     tile.phase.paint(ctx, t);
     tile.phase.over?.(ctx, t, 1);
