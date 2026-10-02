@@ -114,6 +114,38 @@ describe('shell commands', () => {
     expect(complete('wh', home).options).toEqual([]);
   });
 
+  it('has the new home commands: other pages, the open source listing, and the cat', () => {
+    const home: ShellContext = {
+      ...ctx,
+      files: [
+        { path: 'projects/ledger-api', ref: 'projects/ledger-api' },
+        { path: 'opensource/tiny-tool', href: 'https://github.com/ada/tiny-tool', external: true },
+      ],
+      commands: ['asset', 'about', 'opensource', 'simulation', 'mittens', 'help'],
+      sections: { asset: 'asset', about: 'about', opensource: 'opensource', oss: 'opensource' },
+      pages: { simulation: '/play/', play: '/play/' },
+      cat: 'mittens',
+    };
+    expect(execute('about', home).actions).toEqual([{ type: 'print', ref: 'about' }]);
+    expect(execute('opensource', home).actions).toEqual([{ type: 'print', ref: 'opensource' }]);
+    expect(execute('oss', home).actions).toEqual([{ type: 'print', ref: 'opensource' }]);
+    expect(execute('ls opensource/', home).actions).toEqual([{ type: 'print', ref: 'opensource' }]);
+    expect(execute('open tiny-tool', home).actions.at(-1)).toEqual({ type: 'go', href: 'https://github.com/ada/tiny-tool', external: true });
+    expect(complete('ls ', home).options).toEqual(['projects/', 'opensource/']);
+    // The game lives on its own page now.
+    expect(execute('simulation', home).actions.at(-1)).toEqual({ type: 'go', href: '/play/' });
+    expect(execute('PLAY', home).actions.at(-1)).toEqual({ type: 'go', href: '/play/' });
+    // The cat answers to its name and to a bare `cat`; `cat <file>` still reads the file.
+    expect(execute('mittens', home).actions).toEqual([{ type: 'cat' }]);
+    expect(execute('cat', home).actions).toEqual([{ type: 'cat' }]);
+    expect(execute('cat projects/ledger-api', home).actions).toEqual([{ type: 'print', ref: 'projects/ledger-api' }]);
+    expect(suggest('mit', home)).toBe('tens');
+    // Without a cat in the context, nothing changes.
+    expect(execute('cat', ctx).status).toBe(2);
+    expect(execute('mittens', ctx).status).toBe(127);
+    expect(execute('play', ctx).status).toBe(127);
+  });
+
   it('is not fooled by inherited property names', () => {
     expect(execute('constructor', ctx).status).toBe(127);
     expect(execute('toString', ctx).status).toBe(127);

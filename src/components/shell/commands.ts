@@ -48,6 +48,10 @@ export interface ShellContext {
   commands?: readonly string[];
   /** Command name (or alias) -> `ref` of the section it shows. Defaults to the /lab/shell sections. */
   sections?: Record<string, string>;
+  /** Command name (or alias) -> another page of the site it navigates to. */
+  pages?: Record<string, string>;
+  /** The cat's name, as a command. When set, it (and a bare `cat`) makes the particles form the cat. */
+  cat?: string;
 }
 
 export interface MenuItem {
@@ -66,6 +70,7 @@ export type Action =
   | { type: 'clear' }
   | { type: 'reset' }
   | { type: 'reboot' }
+  | { type: 'cat' }
   | { type: 'glitch' };
 
 export interface Result {
@@ -94,9 +99,9 @@ export const COMMANDS = [
   'reboot',
 ] as const;
 
-const DIRS = ['projects', 'writing', 'associations', 'links'];
+const DIRS = ['projects', 'writing', 'associations', 'links', 'opensource'];
 /** Directory listings that are already rendered as a section on the page. */
-const DIR_REF: Record<string, string> = { projects: 'projects', writing: 'writing', associations: 'associations', links: 'contact' };
+const DIR_REF: Record<string, string> = { projects: 'projects', writing: 'writing', associations: 'associations', links: 'contact', opensource: 'opensource' };
 /** Commands that are just `cat` of one section. */
 const SECTION: Record<string, string> = {
   whoami: 'whoami',
@@ -234,6 +239,11 @@ export function execute(input: string, ctx: ShellContext, history: string[] = []
   }
   const sections = ctx.sections ?? SECTION;
   if (Object.hasOwn(sections, cmd)) return ok({ type: 'print', ref: sections[cmd] });
+  if (ctx.pages && Object.hasOwn(ctx.pages, cmd)) {
+    return ok({ type: 'lines', lines: [fill(ctx.t.opening, cmd)], tone: 'dim' }, { type: 'go', href: ctx.pages[cmd] });
+  }
+  // `cat` followed by a file is still cat.
+  if (ctx.cat && (cmd === ctx.cat || (cmd === 'cat' && args.length === 0))) return ok({ type: 'cat' });
 
   switch (cmd) {
     case 'help':
