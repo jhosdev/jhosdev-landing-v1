@@ -23,7 +23,8 @@ bunx astro check   # type/content checks
   - `cat.ts`: the particle cat (a silhouette drawn with paths, sampled into particle targets). Shown when `about.facts` names a cat; its name is a command.
   - `catrig.ts`: the cat side-on, as one solid filled shape swept from a pose (walk cycle, sit, pounce); particles only for forming and breaking up. Pure maths, no DOM; used by the intro variants.
   - `draw.ts`: palette, easing, deterministic noise, shared canvas primitives.
-  - `scene.ts`: the authored canvas timeline, a pure function of time (`createMachine().render(seconds)`). The home plays a ~11s cut once per tab; `/lab/machine/` loops the full 26s. The cat that opens ACQUIRE is a variant (`INTROS`, `DEFAULT_INTRO`; `/lab/` links to each).
+  - `scene.ts`: the authored canvas timeline, a pure function of time (`createMachine().render(seconds)`). The home plays a ~11s cut once per tab; `/lab/machine/` loops the full 26s. The cat that opens ACQUIRE is a variant (`INTROS`, `DEFAULT_INTRO`).
+  - `catphase.ts`: each variant's cat phase as pure painters of time (`catPhase(name, box)`), played by the intro and looped in the `/lab/` gallery.
   - `motion.ts`: section movements = cues (`data-m` / `data-at` attributes in the markup) plus one canvas painter per section, driven by one clock.
   - `runtime.ts`: intro, scroll triggers, focus mode (a hash opens just that section), and the docked command line.
   - `machine.css`: the system's styles (also used by `ArticlePage.astro`).

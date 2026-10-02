@@ -4,7 +4,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
 import TopBar from '../../components/TopBar.astro';
 import BootScene from '../../components/BootScene.astro';
 import { getContent } from '../../data/content';
-import { INTROS, DEFAULT_INTRO } from '../../components/machine/scene';
+import { INTROS, DEFAULT_INTRO, VARIANT } from '../../components/machine/catphase';
 
 const content = getContent('en');
 const label = content.promptUser;
@@ -40,17 +40,33 @@ const NOTES: Record<(typeof INTROS)[number], string> = {
       </div>
     </section>
     <section>
-      <p class="prompt">$ ls intro/ <span class="comment"># intro variants: each opens the home and replays the intro with that cat</span></p>
-      <div class="posts">
+      <p class="prompt">$ ls intro/ <span class="comment"># intro variants, each looping its cat phase; the link replays the home intro with it</span></p>
+      <div class="cats">
         {
           INTROS.map((name) => (
-            <a href={`/?intro=${name}`}>
-              <span class="yr">{name}</span>
-              {NOTES[name]}
-              {name === DEFAULT_INTRO && ' (default)'}
-            </a>
+            <figure class="cat-tile">
+              <canvas data-cat={name} aria-hidden="true" />
+              <figcaption>
+                <span class="cat-name">
+                  ?intro={name}
+                  {name === DEFAULT_INTRO && <span class="cat-meta"> default</span>}
+                </span>
+                <span class="cat-note">{NOTES[name]}</span>
+                <span class="cat-meta">
+                  {VARIANT[name].extra ? `+${VARIANT[name].extra.toFixed(1)}s` : '+0.0s'} to the home intro · <a href={`/?intro=${name}`}>open the intro →</a>
+                </span>
+              </figcaption>
+            </figure>
           ))
         }
+        <figure class="cat-tile">
+          <canvas data-cat="about" aria-hidden="true" />
+          <figcaption>
+            <span class="cat-name">about</span>
+            <span class="cat-note">the about section: a sphere of particles resolves into the sitting cat, which idles</span>
+            <span class="cat-meta">not part of the intro · <a href="/#about">open the section →</a></span>
+          </figcaption>
+        </figure>
       </div>
     </section>
     <section>
@@ -59,3 +75,130 @@ const NOTES: Record<(typeof INTROS)[number], string> = {
     </section>
   </main>
 </BaseLayout>
+
+<style>
+  .cats {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr));
+    gap: 24px;
+  }
+  .cat-tile {
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .cat-tile canvas {
+    display: block;
+    width: 100%;
+    aspect-ratio: 16 / 10;
+    background: var(--color-bg);
+    border: 1px solid var(--color-border);
+  }
+  .cat-tile figcaption {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 13px;
+  }
+  .cat-name {
+    color: var(--color-green);
+  }
+  .cat-note {
+    color: var(--color-body-strong);
+  }
+  .cat-meta {
+    color: var(--color-faint);
+    font-size: 12px;
+  }
+</style>
+
+<script>
+  // Each tile loops its variant's cat phase, drawn by the same code the intro uses (catphase.ts):
+  // from the cat entering to the moment it starts resolving into the handle, a short hold, again.
+  import { CAT_AT, VARIANT, catPhase, introName, type CatPhase } from '../../components/machine/catphase';
+  import { buildCat, drawCat, type Cat } from '../../components/machine/cat';
+  import { BG, E, P, rgb } from '../../components/machine/draw';
+
+  const HOLD = 0.7;
+  const ABOUT = 10;
+  const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  interface Tile {
+    cv: HTMLCanvasElement;
+    ctx: CanvasRenderingContext2D;
+    name: string;
+    seen: boolean;
+    W: number;
+    H: number;
+    phase?: CatPhase;
+    cat?: Cat;
+  }
+
+  const tiles: Tile[] = [];
+  for (const cv of document.querySelectorAll<HTMLCanvasElement>('canvas[data-cat]')) {
+    const ctx = cv.getContext('2d');
+    if (ctx) tiles.push({ cv, ctx, name: cv.dataset.cat ?? '', seen: false, W: 1, H: 1 });
+  }
+
+  function fit(tile: Tile) {
+    const dpr = Math.min(2, devicePixelRatio || 1);
+    tile.W = tile.cv.clientWidth;
+    tile.H = tile.cv.clientHeight;
+    tile.cv.width = Math.round(tile.W * dpr);
+    tile.cv.height = Math.round(tile.H * dpr);
+    tile.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const { W, H } = tile;
+    if (tile.name === 'about') tile.cat = buildCat(Math.min(W, H) * 0.9);
+    else tile.phase = catPhase(introName(tile.name), { cx: W / 2, cy: H / 2, w: W * 0.86, h: H * 0.74, wide: W / H > 1.4 }, dpr);
+  }
+
+  /** One frame of a tile, `s` seconds into its loop. */
+  function draw(tile: Tile, s: number) {
+    const { ctx, W, H } = tile;
+    ctx.fillStyle = rgb(BG);
+    ctx.fillRect(0, 0, W, H);
+    if (tile.cat) {
+      const size = tile.cat.size;
+      const t = s % ABOUT;
+      const grow = still ? 1 : P(t, 0.2, 0.8) * (1 - P(t, ABOUT - 0.4, ABOUT));
+      drawCat(ctx, tile.cat, (W - size) / 2, (H - size) / 2, t, grow, still ? 1 : E.inOutCubic(P(t, 0.8, 2.2)), still);
+      return;
+    }
+    if (!tile.phase) return;
+    const morph = VARIANT[introName(tile.name)].morph;
+    const t = still ? morph : CAT_AT + Math.min(s % (morph - CAT_AT + HOLD), morph - CAT_AT);
+    tile.phase.under?.(ctx, t, 1);
+    tile.phase.paint(ctx, t);
+    tile.phase.over?.(ctx, t, 1);
+  }
+
+  const io = new IntersectionObserver((entries) => {
+    for (const e of entries) {
+      const tile = tiles.find((x) => x.cv === e.target);
+      if (tile) tile.seen = e.isIntersecting;
+    }
+  });
+  const ro = new ResizeObserver((entries) => {
+    for (const e of entries) {
+      const tile = tiles.find((x) => x.cv === e.target);
+      if (!tile) continue;
+      fit(tile);
+      if (still) draw(tile, 0);
+    }
+  });
+  for (const tile of tiles) {
+    io.observe(tile.cv);
+    ro.observe(tile.cv);
+  }
+
+  if (!still) {
+    const t0 = performance.now();
+    const loop = (now: number) => {
+      const s = (now - t0) / 1000;
+      for (const tile of tiles) if (tile.seen && tile.W > 1) draw(tile, s);
+      requestAnimationFrame(loop);
+    };
+    requestAnimationFrame(loop);
+  }
+</script>
