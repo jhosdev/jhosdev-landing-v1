@@ -16,6 +16,11 @@ import { writingByLang, articlePath, readingTime } from '../data/writing';
 import { machineCopy, MACHINE_COMMANDS, SECTIONS, type SectionId } from '../components/machine/copy';
 import type { ShellContext, ShellFile } from '../components/shell/commands';
 import type { MachineData } from '../components/machine/scene';
+// The rest of the faces the first screen is set in. Found only through the CSS, they land
+// after the first layout and every line of text is shaped twice (measured: ~200ms on a phone).
+import mono500 from '@fontsource/ibm-plex-mono/files/ibm-plex-mono-latin-500-normal.woff2?url';
+import sans400 from '@fontsource/ibm-plex-sans/files/ibm-plex-sans-latin-400-normal.woff2?url';
+import sans500 from '@fontsource/ibm-plex-sans/files/ibm-plex-sans-latin-500-normal.woff2?url';
 
 interface Props {
   locale: Locale;
@@ -130,6 +135,7 @@ const alternates = [
 ---
 
 <BaseLayout locale={locale} title={title} description={description} path={withLocale(locale, '/')} alternates={alternates}>
+  {[mono500, sans400, sans500].map((href) => <link slot="head" rel="preload" as="font" type="font/woff2" href={href} crossorigin />)}
   <!-- Runs before first paint: decides intro / focus / motion so the page never flashes the wrong state. -->
   <script is:inline define:vars={{ sections: SECTIONS }}>
     (function () {
