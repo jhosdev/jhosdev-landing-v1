@@ -1,12 +1,20 @@
-// Machine-speak and UI chrome for the home page, the intro and the article
-// pages: strings that are not facts about the person. Profile content never
-// lives here; it comes from getContent()/getResume() and the writing collection.
+// Machine-speak and UI chrome for the home page, the intro, the play page and
+// the article pages: strings that are not facts about the person. Profile
+// content never lives here; it comes from getContent()/getResume() and the
+// writing collection.
+//
+// Two voices, kept apart on purpose:
+//   - MACHINE: the Machine's own vocabulary (HUD chrome, scene names, section
+//     titles, classification tags, command names). It is the same in every
+//     locale: the Machine is not translated.
+//   - HUMAN: what is said to the visitor (helper sentences, help descriptions,
+//     accessible names). Translated per locale.
 
 import type { ShellLocale, ShellStrings } from '../shell/commands';
 import { shellCopy } from '../shell/copy';
 
-/** Addressable sections, in page order. Each id is a URL hash and a command. */
-export const SECTIONS = ['asset', 'associations', 'projects', 'writing', 'simulation', 'contact'] as const;
+/** Addressable sections, in page order. Each id is a URL hash; all but `simulation` (a teaser for /play/) are also commands. */
+export const SECTIONS = ['asset', 'associations', 'projects', 'opensource', 'writing', 'about', 'simulation', 'contact'] as const;
 export type SectionId = (typeof SECTIONS)[number];
 
 /** Commands offered by `help` and tab completion on the home page, in display order. */
@@ -36,18 +44,14 @@ export interface SceneCopy {
   scenes: string[];
 }
 
-interface SectionCopy {
-  title: string;
-  /** One sentence under the heading. */
-  sub: string;
-  /** Unit after the count in the header readout, e.g. "05 targets". */
-  unit: string;
-}
-
-export interface MachineCopy {
+interface MachineVoice {
   scene: SceneCopy;
-  sections: Record<SectionId, SectionCopy>;
+  /** Section title, and the unit after the count in its readout ("05 targets"). */
+  sections: Record<SectionId, { title: string; unit: string }>;
   monitoring: string;
+  live: string;
+  telemetry: string;
+  employment: string;
   identifiers: string;
   speaks: string;
   behaviour: string;
@@ -56,22 +60,44 @@ export interface MachineCopy {
   archived: string;
   target: string;
   classifying: string;
+  repository: string;
+  indexing: string;
+  publicRepo: string;
   transmission: string;
   intercepting: string;
   intercepted: string;
   decoded: string;
-  read: string;
-  outcomes: string;
+  offDuty: string;
+  knownFacts: string;
+  feline: string;
+  runSimulation: string;
   handshake: string;
   channelOpen: string;
   dossier: string;
-  download: string;
   endOfFile: string;
   lastModified: string;
-  // Top bar, dock and focus mode.
   feed: string;
-  skipToContent: string;
   skip: string;
+  replay: string;
+  fullFile: string;
+  navigating: string;
+  /** Said when the cat is summoned; {} is its name. */
+  catSeen: string;
+}
+
+interface HumanCopy {
+  /** One sentence under each section heading. */
+  subs: Record<SectionId, string>;
+  read: string;
+  viewSource: string;
+  outcomes: string;
+  /** The home's pointer to the play page. */
+  teaser: string;
+  playTitle: string;
+  playDescription: string;
+  download: string;
+  skipToContent: string;
+  skipHint: string;
   chipsLabel: string;
   inputLabel: string;
   logLabel: string;
@@ -80,99 +106,137 @@ export interface MachineCopy {
   runLabel: string;
   completeLabel: string;
   closeLabel: string;
-  fullFile: string;
   excerptEnds: string;
-  navigating: string;
   /** Said when `replay` is asked for under reduced motion. */
   still: string;
-  /** Extra command names that resolve to a section (or another command). */
+  /** Help line for the cat's command. */
+  catHelp: string;
+  /** Extra command names that resolve to a section. Those pointing at `simulation` open the play page. */
   aliases: Record<string, string>;
   t: ShellStrings;
 }
 
+export interface MachineCopy extends Omit<MachineVoice, 'sections'>, Omit<HumanCopy, 'subs'> {
+  sections: Record<SectionId, { title: string; unit: string; sub: string }>;
+}
+
+const MACHINE: MachineVoice = {
+  scene: {
+    log: [
+      ['BOOT SEQUENCE', 'OK'],
+      ['OPTICAL FEEDS', '0412'],
+      ['AUDIO INTERCEPT', 'OK'],
+      ['IDENTITY INDEX', 'OK'],
+      ['QUERY', 'LOCATE ASSET'],
+    ],
+    online: 'ONLINE',
+    nominal: 'ALL FEEDS NOMINAL',
+    initializing: 'INITIALIZING',
+    irrelevant: 'IRRELEVANT',
+    inFrame: 'ENTITIES IN FRAME',
+    oneUnidentified: '1 UNIDENTIFIED',
+    unidentified: 'UNIDENTIFIED',
+    analyzing: 'ANALYZING',
+    confirmed: 'ASSET · CONFIRMED',
+    match: 'MATCH',
+    rows: { subject: 'SUBJECT', alias: 'ALIAS', designation: 'DESIGNATION', location: 'LOCATION', current: 'CURRENT' },
+    asset: 'ASSET',
+    classification: 'CLASSIFICATION',
+    subject: 'SUBJECT',
+    designation: 'DESIGNATION',
+    rec: 'REC  FEED 0412 · POV',
+    recShort: 'REC · POV',
+    scenes: ['BOOT', 'SWEEP', 'ACQUIRE', 'IDENTIFY', 'SYSTEMS', 'RECORD', 'ASSESS', 'MONITOR'],
+  },
+  sections: {
+    asset: { title: 'Asset', unit: '' },
+    associations: { title: 'Known associations', unit: 'entities' },
+    projects: { title: 'Projects', unit: 'targets' },
+    opensource: { title: 'Open source', unit: 'repositories' },
+    writing: { title: 'Writing', unit: 'intercepted' },
+    about: { title: 'Personal file', unit: 'facts' },
+    simulation: { title: 'Simulation', unit: 'outcomes' },
+    contact: { title: 'Contact', unit: '' },
+  },
+  monitoring: 'Monitoring',
+  live: 'Live',
+  telemetry: 'Telemetry',
+  employment: 'Employment',
+  identifiers: 'Identifiers',
+  speaks: 'Speaks',
+  behaviour: 'Observed behaviour',
+  affiliation: 'Affiliation',
+  active: 'active',
+  archived: 'archived',
+  target: 'TGT',
+  classifying: 'Classifying',
+  repository: 'Repo',
+  indexing: 'Indexing',
+  publicRepo: 'Public',
+  transmission: 'TX',
+  intercepting: 'Intercepting',
+  intercepted: 'Transmission intercepted',
+  decoded: 'Decoded',
+  offDuty: 'Off duty',
+  knownFacts: 'Known facts',
+  feline: 'Feline',
+  runSimulation: 'Run simulation',
+  handshake: 'Handshake',
+  channelOpen: 'Channel open',
+  dossier: 'Dossier',
+  endOfFile: 'End of file',
+  lastModified: 'last modified',
+  feed: 'Feed 0412',
+  skip: 'Skip',
+  replay: 'Replay intro',
+  fullFile: 'full file',
+  navigating: 'accessing {} …',
+  catSeen: 'entity in frame: {} · feline · not a threat',
+};
+
 const ALIASES: Record<string, string> = {
   whoami: 'asset',
-  about: 'asset',
   stack: 'asset',
   skills: 'asset',
   home: 'asset',
   companies: 'associations',
   work: 'associations',
   experience: 'associations',
+  oss: 'opensource',
+  repos: 'opensource',
   articles: 'writing',
   blog: 'writing',
   posts: 'writing',
+  me: 'about',
+  bio: 'about',
+  personal: 'about',
   play: 'simulation',
   game: 'simulation',
   tictactoe: 'simulation',
   email: 'contact',
 };
 
-export const machineCopy: Record<ShellLocale, MachineCopy> = {
+const HUMAN: Record<ShellLocale, HumanCopy> = {
   en: {
-    scene: {
-      log: [
-        ['BOOT SEQUENCE', 'OK'],
-        ['OPTICAL FEEDS', '0412'],
-        ['AUDIO INTERCEPT', 'OK'],
-        ['IDENTITY INDEX', 'OK'],
-        ['QUERY', 'LOCATE ASSET'],
-      ],
-      online: 'ONLINE',
-      nominal: 'ALL FEEDS NOMINAL',
-      initializing: 'INITIALIZING',
-      irrelevant: 'IRRELEVANT',
-      inFrame: 'ENTITIES IN FRAME',
-      oneUnidentified: '1 UNIDENTIFIED',
-      unidentified: 'UNIDENTIFIED',
-      analyzing: 'ANALYZING',
-      confirmed: 'ASSET · CONFIRMED',
-      match: 'MATCH',
-      rows: { subject: 'SUBJECT', alias: 'ALIAS', designation: 'DESIGNATION', location: 'LOCATION', current: 'CURRENT' },
-      asset: 'ASSET',
-      classification: 'CLASSIFICATION',
-      subject: 'SUBJECT',
-      designation: 'DESIGNATION',
-      rec: 'REC  FEED 0412 · POV',
-      recShort: 'REC · POV',
-      scenes: ['BOOT', 'SWEEP', 'ACQUIRE', 'IDENTIFY', 'SYSTEMS', 'RECORD', 'ASSESS', 'MONITOR'],
+    subs: {
+      asset: '',
+      associations: 'Companies linked to the asset. Select one to open its record.',
+      projects: 'Systems attributed to the asset, acquired and classified.',
+      opensource: 'Code the asset left in the open. Every repository links to its source.',
+      writing: 'Transmissions intercepted from the asset. Each one decodes into an article.',
+      about: 'What the asset does when nobody is paying for it.',
+      simulation: 'The Machine runs every outcome before it moves.',
+      contact: '',
     },
-    sections: {
-      asset: { title: 'Asset', sub: '', unit: '' },
-      associations: {
-        title: 'Known associations',
-        sub: 'Companies linked to the asset. Select one to open its record.',
-        unit: 'entities',
-      },
-      projects: { title: 'Projects', sub: 'Systems attributed to the asset, acquired and classified.', unit: 'targets' },
-      writing: { title: 'Writing', sub: 'Transmissions intercepted from the asset. Each one decodes into an article.', unit: 'intercepted' },
-      simulation: { title: 'Simulation', sub: 'The Machine runs every outcome before it moves. Try to beat it.', unit: 'outcomes' },
-      contact: { title: 'Contact', sub: '', unit: '' },
-    },
-    monitoring: 'Monitoring',
-    identifiers: 'Identifiers',
-    speaks: 'Speaks',
-    behaviour: 'Observed behaviour',
-    affiliation: 'Affiliation',
-    active: 'active',
-    archived: 'archived',
-    target: 'TGT',
-    classifying: 'Classifying',
-    transmission: 'TX',
-    intercepting: 'Intercepting',
-    intercepted: 'Transmission intercepted',
-    decoded: 'Decoded',
     read: 'read transmission',
+    viewSource: 'view source',
     outcomes: 'possible games',
-    handshake: 'Handshake',
-    channelOpen: 'Channel open',
-    dossier: 'Dossier',
+    teaser: 'Bored? Play against the Machine at tic-tac-toe.',
+    playTitle: 'Play the Machine',
+    playDescription: 'Tic-tac-toe against a minimax search you can watch think.',
     download: 'download',
-    endOfFile: 'End of file',
-    lastModified: 'last modified',
-    feed: 'Feed 0412',
     skipToContent: 'Skip to content',
-    skip: 'any key, tap or scroll to skip',
+    skipHint: 'or any key',
     chipsLabel: 'Sections',
     inputLabel: 'Command line: type a section name, or help',
     logLabel: 'Command output',
@@ -181,21 +245,22 @@ export const machineCopy: Record<ShellLocale, MachineCopy> = {
     runLabel: 'Run command',
     completeLabel: 'Complete the suggestion',
     closeLabel: 'Close output',
-    fullFile: 'full file',
     excerptEnds: 'Excerpt ends. The rest of the file is one command away.',
-    navigating: 'accessing {} …',
     still: 'reduced motion is on: the intro stays off.',
+    catHelp: 'the particles know this one',
     aliases: ALIASES,
     t: {
       ...shellCopy.en.t,
       help: {
-        asset: 'identity record: stack and languages',
+        asset: 'identity record: stack and employers',
         associations: 'companies, as tracked entities',
         projects: 'systems, acquired and classified',
+        opensource: 'public repositories',
         writing: 'articles, as intercepted transmissions',
+        about: 'the personal file',
         simulation: 'play the Machine at tic-tac-toe',
         contact: 'open a channel',
-        open: 'a project, company, article or link',
+        open: 'a project, repository, company, article or link',
         resume: 'download the dossier (PDF)',
         lang: 'switch language',
         all: 'leave focus, show the full file',
@@ -208,69 +273,25 @@ export const machineCopy: Record<ShellLocale, MachineCopy> = {
     },
   },
   es: {
-    scene: {
-      log: [
-        ['ARRANQUE', 'OK'],
-        ['FEEDS ÓPTICOS', '0412'],
-        ['ESCUCHA DE AUDIO', 'OK'],
-        ['ÍNDICE DE IDENTIDAD', 'OK'],
-        ['CONSULTA', 'LOCALIZAR ACTIVO'],
-      ],
-      online: 'EN LÍNEA',
-      nominal: 'FEEDS NOMINALES',
-      initializing: 'INICIALIZANDO',
-      irrelevant: 'IRRELEVANTE',
-      inFrame: 'ENTIDADES EN CUADRO',
-      oneUnidentified: '1 NO IDENTIFICADO',
-      unidentified: 'NO IDENTIFICADO',
-      analyzing: 'ANALIZANDO',
-      confirmed: 'ACTIVO · CONFIRMADO',
-      match: 'COINCIDENCIA',
-      rows: { subject: 'SUJETO', alias: 'ALIAS', designation: 'DESIGNACIÓN', location: 'UBICACIÓN', current: 'ACTUAL' },
-      asset: 'ACTIVO',
-      classification: 'CLASIFICACIÓN',
-      subject: 'SUJETO',
-      designation: 'DESIGNACIÓN',
-      rec: 'REC  FEED 0412 · POV',
-      recShort: 'REC · POV',
-      scenes: ['ARRANQUE', 'BARRIDO', 'ADQUISICIÓN', 'IDENTIFICACIÓN', 'SISTEMAS', 'REGISTRO', 'EVALUACIÓN', 'MONITOREO'],
+    subs: {
+      asset: '',
+      associations: 'Empresas vinculadas al asset. Selecciona una para abrir su expediente.',
+      projects: 'Sistemas atribuidos al asset, adquiridos y clasificados.',
+      opensource: 'Código que el asset dejó a la vista. Cada repositorio enlaza a su fuente.',
+      writing: 'Transmisiones interceptadas al asset. Cada una se decodifica en un artículo.',
+      about: 'Lo que hace el asset cuando nadie le paga por ello.',
+      simulation: 'La Máquina recorre cada desenlace antes de mover.',
+      contact: '',
     },
-    sections: {
-      asset: { title: 'Activo', sub: '', unit: '' },
-      associations: {
-        title: 'Asociaciones conocidas',
-        sub: 'Empresas vinculadas al activo. Selecciona una para abrir su expediente.',
-        unit: 'entidades',
-      },
-      projects: { title: 'Proyectos', sub: 'Sistemas atribuidos al activo, adquiridos y clasificados.', unit: 'objetivos' },
-      writing: { title: 'Artículos', sub: 'Transmisiones interceptadas al activo. Cada una se decodifica en un artículo.', unit: 'interceptadas' },
-      simulation: { title: 'Simulación', sub: 'La Máquina recorre cada desenlace antes de mover. Intenta ganarle.', unit: 'desenlaces' },
-      contact: { title: 'Contacto', sub: '', unit: '' },
-    },
-    monitoring: 'Monitoreando',
-    identifiers: 'Identificadores',
-    speaks: 'Habla',
-    behaviour: 'Conducta observada',
-    affiliation: 'Afiliación',
-    active: 'activa',
-    archived: 'archivada',
-    target: 'OBJ',
-    classifying: 'Clasificando',
-    transmission: 'TX',
-    intercepting: 'Interceptando',
-    intercepted: 'Transmisión interceptada',
-    decoded: 'Decodificada',
     read: 'leer transmisión',
+    viewSource: 'ver código',
     outcomes: 'partidas posibles',
-    handshake: 'Negociando',
-    channelOpen: 'Canal abierto',
-    dossier: 'Expediente',
+    teaser: '¿Aburrido? Juega contra la Máquina al tres en raya.',
+    playTitle: 'Juega contra la Máquina',
+    playDescription: 'Tres en raya contra una búsqueda minimax que puedes ver pensar.',
     download: 'descargar',
-    endOfFile: 'Fin del archivo',
-    lastModified: 'última modificación',
-    feed: 'Feed 0412',
     skipToContent: 'Saltar al contenido',
-    skip: 'pulsa una tecla, toca o desplaza para saltar',
+    skipHint: 'o cualquier tecla',
     chipsLabel: 'Secciones',
     inputLabel: 'Línea de comandos: escribe una sección, o help',
     logLabel: 'Salida de comandos',
@@ -279,32 +300,32 @@ export const machineCopy: Record<ShellLocale, MachineCopy> = {
     runLabel: 'Ejecutar comando',
     completeLabel: 'Completar la sugerencia',
     closeLabel: 'Cerrar salida',
-    fullFile: 'archivo completo',
     excerptEnds: 'Fin del extracto. El resto del archivo está a un comando.',
-    navigating: 'accediendo a {} …',
     still: 'movimiento reducido activo: la intro queda desactivada.',
+    catHelp: 'las partículas la conocen',
     aliases: {
       ...ALIASES,
-      activo: 'asset',
-      asociaciones: 'associations',
       empresas: 'associations',
       proyectos: 'projects',
+      repositorios: 'opensource',
       articulos: 'writing',
-      simulacion: 'simulation',
+      sobre: 'about',
       jugar: 'simulation',
       contacto: 'contact',
     },
     t: {
       ...shellCopy.es.t,
       help: {
-        asset: 'ficha de identidad: stack e idiomas',
+        asset: 'ficha de identidad: stack y empleadores',
         associations: 'empresas, como entidades rastreadas',
         projects: 'sistemas, adquiridos y clasificados',
+        opensource: 'repositorios públicos',
         writing: 'artículos, como transmisiones interceptadas',
+        about: 'el expediente personal',
         simulation: 'juega tres en raya contra la Máquina',
         contact: 'abre un canal',
-        open: 'un proyecto, empresa, artículo o enlace',
-        resume: 'descarga el expediente (PDF)',
+        open: 'un proyecto, repositorio, empresa, artículo o enlace',
+        resume: 'descarga el dossier (PDF)',
         lang: 'cambia de idioma',
         all: 'sale del foco y muestra el archivo completo',
         replay: 'repite la intro',
@@ -316,3 +337,15 @@ export const machineCopy: Record<ShellLocale, MachineCopy> = {
     },
   },
 };
+
+function compose(locale: ShellLocale): MachineCopy {
+  const { subs, ...human } = HUMAN[locale];
+  const { sections, ...machine } = MACHINE;
+  return {
+    ...machine,
+    ...human,
+    sections: Object.fromEntries(SECTIONS.map((id) => [id, { ...sections[id], sub: subs[id] }])) as MachineCopy['sections'],
+  };
+}
+
+export const machineCopy: Record<ShellLocale, MachineCopy> = { en: compose('en'), es: compose('es') };

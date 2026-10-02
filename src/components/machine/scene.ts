@@ -11,7 +11,6 @@ import type { SceneCopy } from './copy';
 
 export interface MachineData {
   handle: string;
-  prompt: string;
   name: string;
   role: string;
   location: string;
@@ -80,7 +79,7 @@ export async function createMachine(cv: HTMLCanvasElement, data: MachineData, op
   const rows = (
     [
       [c.rows.subject, NAME],
-      [c.rows.alias, data.prompt],
+      [c.rows.alias, data.handle],
       [c.rows.designation, ROLE],
       [c.rows.location, data.location.toUpperCase()],
       [c.rows.current, job ? `${job.company} · ${job.period}`.toUpperCase() : ''],
@@ -628,7 +627,7 @@ export async function createMachine(cv: HTMLCanvasElement, data: MachineData, op
       tag(decode(c.designation, P(t, ROLE_AT + 0.5, ROLE_AT + 0.75), t, 5), W / 2 - bw / 2 - padX, y0 - padX * 0.7 - 8, TEXT);
     }
     if (t > ROLE_AT + 0.75) {
-      const s = trunc([data.location.toUpperCase(), data.prompt].filter(Boolean).join('  ·  '), Math.floor((W * 0.86) / ((fs + 2) * CW)));
+      const s = trunc([data.location.toUpperCase(), data.handle].filter(Boolean).join('  ·  '), Math.floor((W * 0.86) / ((fs + 2) * CW)));
       txt(decode(s, P(t, ROLE_AT + 0.75, ROLE_AT + 1.2), t, 6), W / 2, y0 + bh + padX * 0.7 + fs * 2.6, fs + 2, rgb(BODY), 'center');
     }
   }
@@ -926,12 +925,23 @@ export async function createMachine(cv: HTMLCanvasElement, data: MachineData, op
   // =====================================================================
   function column(lines: string[], x: number, align: CanvasTextAlign, tau: number, a: number, seed: number) {
     const lh = fs * 1.7;
-    const shown = lines.slice(0, Math.floor((bot - top - 120) / lh));
+    // Long lines wrap by word (continuations keep the indent) instead of being cut mid-word.
+    const wrapped = lines.flatMap((line) => {
+      const indent = line.match(/^\s*/)?.[0] ?? '';
+      const out: string[] = [];
+      for (const word of line.trim().split(/\s+/)) {
+        const last = out.length - 1;
+        if (last >= 0 && out[last].length + 1 + word.length <= 26) out[last] += ` ${word}`;
+        else out.push(indent + word);
+      }
+      return out.length ? out : [''];
+    });
+    const shown = wrapped.slice(0, Math.floor((bot - top - 120) / lh));
     const y0 = (top + bot) / 2 - (shown.length * lh) / 2;
     const active = Math.floor((tau / LOOP) * shown.length * 2) % shown.length;
     const local = ((tau / LOOP) * shown.length * 2) % 1;
     shown.forEach((line, i) => {
-      const s = trunc(line.toUpperCase(), 26);
+      const s = line.toUpperCase();
       const on = i === active;
       txt(on && !calm ? decode(s, cl(local * 2.5), tau, seed + i) : s, x, y0 + i * lh, fs, rgb(on ? TEXT : line.startsWith('>') || align === 'right' ? BODY : MUTED, a), align);
     });
@@ -944,8 +954,8 @@ export async function createMachine(cv: HTMLCanvasElement, data: MachineData, op
     const cols = W >= 1100;
     const cx = W / 2;
     const cy = H * 0.46;
-    // A long name wraps rather than shrinking to a caption.
-    const f = fitWrap(NAME, W * (cols ? 0.5 : 0.78), H * 0.3, wide ? 88 : 44);
+    // The handle is the headline; role, location and the full name sit under it.
+    const f = fitWrap((data.handle || NAME).toUpperCase(), W * (cols ? 0.5 : 0.78), H * 0.3, wide ? 88 : 44);
     const size = f.size;
     const lh = size * 1.12;
     const bw = Math.max(...f.lines.map((l) => l.length)) * size * CW + (wide ? 72 : 28);
@@ -980,14 +990,9 @@ export async function createMachine(cv: HTMLCanvasElement, data: MachineData, op
     const rk = P(t, IDLE_AT + 0.4, INTRO + 0.4);
     const rs = wide ? 20 : 13;
     txt(decode(trunc(ROLE, Math.floor((W * 0.86) / (rs * CW))), rk, t, 61), cx, cy + bh / 2 + rs * 2.4, rs, rgb(BODY_STRONG), 'center');
-    txt(
-      decode(trunc([data.location.toUpperCase(), data.prompt].filter(Boolean).join('  ·  '), Math.floor((W * 0.86) / (fs * CW))), rk, t, 62),
-      cx,
-      cy + bh / 2 + rs * 2.4 + fs * 2,
-      fs,
-      rgb(MUTED),
-      'center',
-    );
+    [data.location.toUpperCase(), NAME].filter(Boolean).forEach((line, i) => {
+      txt(decode(trunc(line, Math.floor((W * 0.86) / (fs * CW))), rk, t, 62 + i), cx, cy + bh / 2 + rs * 2.4 + fs * 2 * (i + 1), fs, rgb(MUTED), 'center');
+    });
     // Status line right of the tag: a slow heartbeat.
     const beat = 0.5 + 0.5 * Math.sin(ph * 6);
     ctx.fillStyle = rgb(GREEN, k * (0.35 + 0.65 * beat));

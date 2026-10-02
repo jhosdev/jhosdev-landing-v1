@@ -17,8 +17,7 @@ const content = getContent(locale);
 const { basics, meta } = getResume(locale);
 
 const data = {
-  handle: content.promptUser.split('@')[0],
-  prompt: content.promptUser,
+  handle: content.promptUser,
   name: basics.name,
   role: basics.label,
   location: [basics.location.city, basics.location.countryCode].filter(Boolean).join(', '),

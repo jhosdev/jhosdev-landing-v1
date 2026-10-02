@@ -11,6 +11,7 @@ import {
   along, buildStreets, cl, dash, decode, drawStreets, entPos, font, hash, lerp, mulberry32, pad, rgb,
   type RGB, type Streets,
 } from './draw';
+import { buildCat, drawCat } from './cat';
 
 /* ------------------------------------------------------------------ cues */
 
@@ -266,6 +267,20 @@ function corners(ctx: CanvasRenderingContext2D, b: Box, l: number, col: string, 
 
 const grow = (b: Box, by: number): Box => ({ x: b.x - by, y: b.y - by, w: b.w + by * 2, h: b.h + by * 2 });
 
+/** Classification tag on the canvas: filled label, dark text. (x, y) is its bottom-left. */
+function label(ctx: CanvasRenderingContext2D, s: string, x: number, y: number, c: RGB, a = 1, size = 11) {
+  const w = s.length * size * 0.66 + 14;
+  ctx.fillStyle = rgb(c, a);
+  ctx.fillRect(x, y - size * 1.9, w, size * 1.9);
+  ctx.save();
+  ctx.letterSpacing = '0.06em';
+  text(ctx, s, x + 7, y - size * 0.55, size, rgb(BG, a), 'left', 500);
+  ctx.restore();
+}
+
+/** How long the cat stays in the hero when it is summoned, in seconds. */
+export const CAT_LEN = 6.4;
+
 /** Idle period shared with the intro's map: every idle motion divides it. */
 const LOOP = 12;
 
@@ -283,18 +298,20 @@ const asset: Painter = (fx, t) => {
     const subject = fx.host.querySelector('.mc-subject');
     const lock = name ? fx.box(name) : { x: W / 2, y: H / 2, w: 0, h: 0 };
     const pool = subject ? fx.box(subject) : lock;
+    // The telemetry and employment columns: text that must stay readable over the map.
+    const cols = all(fx, '[data-col]').map((el) => fx.box(el));
     const far = (p: number[], b: Box, by: number) => p[0] < b.x - by || p[0] > b.x + b.w + by || p[1] < b.y - by * 0.6 || p[1] > b.y + b.h + by * 0.6;
     // Tracked passers-by: inside the frame, clear of the subject, spread out.
     const tracked: number[] = [];
     for (let i = 1; i < map.ents.length && tracked.length < (W > 700 ? 5 : 3); i++) {
       const p = entPos(map, map.ents[i], 0);
-      if (p[0] < 30 || p[0] > W - 90 || p[1] < 44 || p[1] > H - 30) continue;
+      if (p[0] < 30 || p[0] > W - 90 || p[1] < 44 || p[1] > H - 70) continue;
       // Clear of the subject at both ends of its patrol, not just where it starts.
-      if ([0, 3, 6, 9].some((time) => !far(entPos(map, map.ents[i], time), pool, 70))) continue;
+      if ([0, 3, 6, 9].some((time) => !far(entPos(map, map.ents[i], time), pool, 70) || cols.some((b) => !far(entPos(map, map.ents[i], time), b, 24)))) continue;
       if (tracked.some((j) => Math.hypot(...entPos(map, map.ents[j], 0).map((v, n) => v - p[n])) < 150)) continue;
       tracked.push(i);
     }
-    return { map, lock: grow(lock, 14), pool, tracked };
+    return { map, lock: grow(lock, 14), pool, cols, tracked };
   });
   ctx.clearRect(0, 0, W, H);
   const on = calm ? 1 : E.outCubic(P(t, 0, 0.8));
@@ -324,6 +341,17 @@ const asset: Painter = (fx, t) => {
   pool.addColorStop(1, rgb(BG, 0));
   ctx.fillStyle = pool;
   ctx.fillRect(0, 0, W, H);
+  for (const b of L.cols) {
+    // A band of background behind each column, soft at its sides.
+    const band = ctx.createLinearGradient(b.x - 36, 0, b.x + b.w + 36, 0);
+    const edge = 36 / (b.w + 72);
+    band.addColorStop(0, rgb(BG, 0));
+    band.addColorStop(edge, rgb(BG, 0.9));
+    band.addColorStop(1 - edge, rgb(BG, 0.9));
+    band.addColorStop(1, rgb(BG, 0));
+    ctx.fillStyle = band;
+    ctx.fillRect(b.x - 36, b.y - 14, b.w + 72, b.h + 28);
+  }
 
   if (!calm && t >= 0.45 && t < 1.4) {
     // Under analysis: an amber line scans the subject.
@@ -355,7 +383,25 @@ const asset: Painter = (fx, t) => {
     const s = Math.floor(t);
     text(ctx, `${pad(Math.floor(s / 3600), 2)}:${pad(Math.floor(s / 60) % 60, 2)}:${pad(s % 60, 2)}:${pad(Math.floor((t % 1) * 30), 2)}`, W - 16, 23, 11, rgb(BODY, on), 'right');
   }
+  if (fx.host.dataset.scene) text(ctx, fx.host.dataset.scene, 18, H - 17, 11, rgb(BODY, on));
   corners(ctx, { x: 8, y: 8, w: W - 16, h: H - 16 }, 10, rgb(MUTED, on), 1.5);
+
+  // The cat, when summoned: the particles gather over the subject, hold, and leave again.
+  const at = fx.state.catAt;
+  if (at === undefined) return;
+  const local = calm ? CAT_LEN / 2 : t - at;
+  if (local <= 0 || local >= CAT_LEN) return;
+  const C = memo(fx, 'cat', () => {
+    const size = Math.min(L.pool.w * 0.92, L.pool.h * 0.9, 400);
+    return { cat: buildCat(size), x: px - size / 2, y: py - size / 2, size };
+  });
+  const out = CAT_LEN - 1.7;
+  drawCat(ctx, C.cat, C.x, C.y, t, P(local, 0, 0.5) * (1 - P(local, CAT_LEN - 0.5, CAT_LEN)), E.inOutCubic(P(local, 0.4, 1.8)) * (1 - P(local, out, CAT_LEN - 0.4)), calm);
+  const a = calm ? 1 : P(local, 1.7, 1.95) * (1 - P(local, out - 0.1, out + 0.15));
+  if (a <= 0) return;
+  const box = grow({ x: C.x, y: C.y, w: C.size, h: C.size }, 4 + 14 * (1 - E.outExpo(P(local, 1.7, 2.2))));
+  corners(ctx, box, 16, rgb(TEXT, a), 1.5);
+  if (fx.host.dataset.cat) label(ctx, fx.host.dataset.cat.toUpperCase(), box.x, box.y - 8, TEXT, a);
 };
 
 /**
@@ -452,6 +498,58 @@ const projects: Painter = (fx, t) => {
     ctx.fillStyle = rgb(AMBER, 0.85);
     ctx.fillRect(b.x, sy, b.w, 1);
   });
+};
+
+/**
+ * OPEN SOURCE: a commit rail down the left of the listing. It grows to each
+ * repository as that row is indexed, and leaves a node on it.
+ */
+const opensource: Painter = (fx, t) => {
+  const { ctx, W, H, calm } = fx;
+  const L = memo(fx, 'repos', () => all(fx, '[data-g]').map((el) => ({ el, box: fx.box(el) })));
+  ctx.clearRect(0, 0, W, H);
+  const x = 6.5;
+  let from = 0;
+  L.forEach((row) => {
+    const local = calm ? 9 : t - (fx.start.get(row.el) ?? 0);
+    const y = row.box.y + 31;
+    const k = E.outExpo(P(local, -0.3, 0.1));
+    dash(ctx, [[x, from], [x, y - 7]], k, rgb(BODY, 0.6), calm ? 0 : t);
+    from = y + 7;
+    if (local < 0) return;
+    // The node: hollow while the row is being indexed, filled once it is.
+    const done = local > 0.55;
+    ctx.fillStyle = rgb(done ? TEXT : AMBER);
+    ctx.fillRect(x - 4.5, y - 4.5, 9, 9);
+    if (!done) {
+      ctx.fillStyle = rgb(BG);
+      ctx.fillRect(x - 2.5, y - 2.5, 5, 5);
+    }
+    ctx.fillStyle = rgb(BODY, 0.6);
+    ctx.fillRect(x + 7, y - 0.5, (row.box.x - x - 13) * E.outExpo(P(local, 0, 0.3)), 1);
+  });
+};
+
+/** ABOUT: a second entity in the frame. A sphere of noise is analysed and resolves into the cat, which then idles. */
+const about: Painter = (fx, t) => {
+  const { ctx, W, H, calm } = fx;
+  const L = memo(fx, 'pet', () => {
+    const size = Math.min(W, H) * 0.84;
+    return { cat: buildCat(size), x: (W - size) / 2, y: (H - size) / 2, size };
+  });
+  ctx.clearRect(0, 0, W, H);
+  if (!calm && t >= 0.8 && t < 1.8) {
+    // Under analysis: an amber line scans the frame.
+    const sy = (((t - 0.8) % 0.5) / 0.5) * H;
+    const wash = ctx.createLinearGradient(0, sy - 36, 0, sy);
+    wash.addColorStop(0, rgb(AMBER, 0));
+    wash.addColorStop(1, rgb(AMBER, 0.12));
+    ctx.fillStyle = wash;
+    ctx.fillRect(0, Math.max(0, sy - 36), W, Math.min(36, sy));
+    ctx.fillStyle = rgb(AMBER, 0.8);
+    ctx.fillRect(0, sy, W, 1);
+  }
+  drawCat(ctx, L.cat, L.x, L.y, t, calm ? 1 : P(t, 0.2, 0.8), calm ? 1 : E.inOutCubic(P(t, 0.8, 2.2)), calm);
 };
 
 /** One strip of signal: red noise ahead of the decode front, a calm green carrier behind it. */
@@ -579,7 +677,7 @@ const contact: Painter = (fx, t) => {
   }
 };
 
-const painters: Record<string, Painter> = { asset, associations, projects, writing, simulation, contact };
+const painters: Record<string, Painter> = { asset, associations, projects, opensource, writing, about, simulation, contact };
 
 /* -------------------------------------------------------------- movement */
 

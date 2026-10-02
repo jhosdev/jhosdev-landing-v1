@@ -1,0 +1,47 @@
+---
+// The play page: tic-tac-toe against the Machine, inside the Machine's frame.
+// The game panel is reused as built (see TicTacToe.astro); this page only gives
+// it the top bar, a section head and a way back to the file.
+import '../components/machine/machine.css';
+import BaseLayout from './BaseLayout.astro';
+import MachineBar from '../components/machine/MachineBar.astro';
+import SectionHead from '../components/machine/SectionHead.astro';
+import TicTacToe from '../components/TicTacToe.astro';
+import { getContent } from '../data/content';
+import { withLocale, otherLocale, type Locale } from '../data/resume';
+import { machineCopy } from '../components/machine/copy';
+
+interface Props {
+  locale: Locale;
+}
+
+const { locale } = Astro.props;
+const content = getContent(locale);
+const copy = machineCopy[locale];
+const other = otherLocale(locale);
+const home = withLocale(locale, '/');
+const path = withLocale(locale, '/play/');
+const alternates = [
+  { hreflang: other, path: withLocale(other, '/play/') },
+  { hreflang: 'x-default', path: '/play/' },
+];
+---
+
+<BaseLayout locale={locale} title={`${copy.playTitle} — ${content.promptUser}`} description={copy.playDescription} path={path} alternates={alternates}>
+  <div class="mc mc-play">
+    <MachineBar promptUser={content.promptUser} locale={locale} switchHref={withLocale(other, '/play/')} crumb={{ label: copy.fullFile, href: home }} />
+    <main id="content">
+      <section class="mc-section">
+        <div class="mc-wrap">
+          <SectionHead index={1} title={copy.sections.simulation.title} readout={`255,168 ${copy.outcomes}`} sub={copy.sections.simulation.sub} />
+          <div class="mc-sim mc-lock">
+            <TicTacToe />
+          </div>
+          <p class="mc-outs mc-back">
+            <a href={`${home}#simulation`}><span aria-hidden="true">←</span> {copy.fullFile}</a>
+          </p>
+        </div>
+      </section>
+    </main>
+  </div>
+</BaseLayout>

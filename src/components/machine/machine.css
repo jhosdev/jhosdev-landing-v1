@@ -373,7 +373,9 @@ html[data-focus] .mc-section {
 html[data-focus='asset'] #asset,
 html[data-focus='associations'] #associations,
 html[data-focus='projects'] #projects,
+html[data-focus='opensource'] #opensource,
 html[data-focus='writing'] #writing,
+html[data-focus='about'] #about,
 html[data-focus='simulation'] #simulation,
 html[data-focus='contact'] #contact {
   display: block;
@@ -410,24 +412,34 @@ html.mc-js[data-focus] .mc-excerpt {
 /* 01 ASSET ------------------------------------------------------------------ */
 
 .mc-feed {
-  container-type: inline-size;
   position: relative;
   display: grid;
-  place-items: center;
+  grid-template-columns: minmax(0, 218px) minmax(0, 1fr) minmax(0, 218px);
+  grid-template-areas: 'tele subject emp';
+  align-items: center;
+  gap: 28px;
   min-height: clamp(320px, 50vh, 460px);
-  padding: 64px 24px 48px;
+  padding: 58px 30px 62px;
   border: 1px solid var(--color-border);
   background: var(--color-bg);
   overflow: hidden;
 }
 
 .mc-subject {
+  grid-area: subject;
+  container-type: inline-size;
   position: relative;
   z-index: 1;
   display: flex;
   flex-direction: column;
   align-items: center;
   --lp: 18px;
+  transition: opacity 0.5s;
+}
+
+/* The cat has the frame: the subject steps back. */
+.mc-feed.is-cat .mc-subject {
+  opacity: 0.07;
 }
 
 /* Tag, name and match meter share the width of the lock, whatever the role line needs. */
@@ -439,6 +451,98 @@ html.mc-js[data-focus] .mc-excerpt {
 
 .mc-subject .mc-tags {
   margin: 0 calc(var(--lp) * -1) calc(var(--lp) + 8px);
+}
+
+/* The monitor's side columns: stack telemetry and employment. They wrap; nothing is cut. */
+.mc-col {
+  position: relative;
+  z-index: 1;
+  font-size: 11px;
+  line-height: 1.65;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-nav);
+  overflow-wrap: anywhere;
+}
+
+.mc-tele {
+  grid-area: tele;
+}
+
+.mc-tele > div + div {
+  margin-top: 9px;
+}
+
+.mc-tele dt {
+  color: var(--color-body-strong);
+}
+
+.mc-tele dd {
+  padding-left: 2ch;
+}
+
+.mc-emp {
+  grid-area: emp;
+  display: grid;
+  gap: 13px;
+  text-align: right;
+}
+
+.mc .mc-emp a {
+  display: block;
+  color: inherit;
+}
+
+.mc-emp a span {
+  display: block;
+}
+
+.mc-emp-when {
+  color: var(--color-body-strong);
+}
+
+/* Still there: the same green dot the associations list uses. */
+.mc-emp-when.is-current:not([data-d])::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 8px;
+  border-radius: 50%;
+  background: var(--color-green);
+  vertical-align: 1px;
+}
+
+.mc-emp-at {
+  color: var(--color-body);
+}
+
+.mc .mc-emp a:hover {
+  opacity: 1;
+}
+
+.mc-emp a:hover .mc-emp-at {
+  color: var(--color-cyan);
+}
+
+.mc .mc-replay {
+  position: absolute;
+  right: 12px;
+  bottom: 6px;
+  z-index: 1;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 0;
+  background: none;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-nav);
+  cursor: pointer;
+}
+
+.mc .mc-replay:hover {
+  color: var(--color-cyan);
 }
 
 .mc-live {
@@ -469,7 +573,6 @@ html.mc-js[data-focus] .mc-excerpt {
   font-weight: 500;
   line-height: 1.08;
   text-align: center;
-  text-transform: uppercase;
   color: var(--color-text);
 }
 
@@ -508,7 +611,7 @@ html.mc-js[data-focus] .mc-excerpt {
 
 .mc-role {
   margin-top: 22px;
-  font-size: clamp(14px, 2.4cqw, 20px);
+  font-size: clamp(14px, 4.2cqw, 20px);
   font-weight: 500;
   letter-spacing: 0.12em;
   text-align: center;
@@ -523,6 +626,11 @@ html.mc-js[data-focus] .mc-excerpt {
   text-align: center;
   text-transform: uppercase;
   color: var(--color-nav);
+}
+
+.mc-fullname {
+  margin-top: 4px;
+  color: var(--color-body);
 }
 
 .mc-file {
@@ -798,11 +906,6 @@ html.mc-js[data-focus] .mc-excerpt {
   gap: 44px 44px;
 }
 
-/* An odd number of targets: the last one takes the full row (the canvas is the first child). */
-.mc-target:last-child:nth-child(even) {
-  grid-column: 1 / -1;
-}
-
 .mc-target {
   display: flex;
   flex-direction: column;
@@ -853,7 +956,69 @@ html.mc-js[data-focus] .mc-excerpt {
   opacity: 0.4;
 }
 
-/* 04 WRITING ---------------------------------------------------------------- */
+/* OPEN SOURCE ---------------------------------------------------------------- */
+
+/* A listing on a commit rail (the canvas draws the rail in the left gutter): no panels, no brackets. */
+.mc-repos {
+  position: relative;
+  max-width: 860px;
+}
+
+.mc-repos ol {
+  position: relative;
+  z-index: 1;
+  padding-left: 34px;
+}
+
+.mc-repos li + li {
+  border-top: 1px solid var(--color-border);
+}
+
+.mc .mc-repo {
+  display: grid;
+  grid-template-columns: minmax(0, 250px) minmax(0, 1fr);
+  gap: 6px 28px;
+  align-items: baseline;
+  padding: 20px 0 22px;
+  color: inherit;
+}
+
+.mc .mc-repo:hover {
+  opacity: 1;
+}
+
+.mc-repo-meta {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  font-size: 11.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-nav);
+}
+
+.mc-repo-name {
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--color-cyan);
+  overflow-wrap: anywhere;
+}
+
+.mc-repo:hover .mc-repo-name,
+.is-target .mc-repo-name {
+  color: var(--color-text);
+}
+
+.mc-repo-desc {
+  font-family: var(--font-sans);
+  font-size: 14.5px;
+  line-height: 1.6;
+  color: var(--color-body);
+}
+
+/* WRITING -------------------------------------------------------------------- */
 
 .mc-txs {
   position: relative;
@@ -927,7 +1092,55 @@ html.mc-js[data-focus] .mc-excerpt {
   color: var(--color-cyan);
 }
 
-/* 05 SIMULATION ------------------------------------------------------------- */
+/* ABOUT ---------------------------------------------------------------------- */
+
+.mc-personal {
+  display: grid;
+  gap: 56px 72px;
+  align-items: center;
+}
+
+.mc-personal.has-pet {
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.8fr);
+}
+
+.mc-personal-file {
+  max-width: 640px;
+}
+
+.mc-personal-file .mc-tags {
+  margin-bottom: 18px;
+}
+
+.mc-personal-p {
+  margin-top: 12px;
+  font-family: var(--font-sans);
+  font-size: 16px;
+  line-height: 1.7;
+  color: var(--color-body);
+}
+
+.mc-personal-file .mc-label {
+  margin-top: 36px;
+}
+
+.mc-pet {
+  --lp: 0px;
+  width: 100%;
+  max-width: 340px;
+  justify-self: center;
+}
+
+.mc-pet .mc-tags {
+  margin-bottom: 8px;
+}
+
+.mc-pet-box {
+  aspect-ratio: 1;
+  background: var(--color-bg);
+}
+
+/* SIMULATION (the home's teaser, and the play page) --------------------------- */
 
 .mc-sims {
   position: relative;
@@ -936,6 +1149,7 @@ html.mc-js[data-focus] .mc-excerpt {
   align-items: center;
   max-width: 860px;
   height: 40px;
+  margin-bottom: 8px;
 }
 
 .mc-sims-count {
@@ -970,7 +1184,16 @@ html.mc-js[data-focus] .mc-excerpt {
   border-radius: 0;
 }
 
-/* 06 CONTACT ---------------------------------------------------------------- */
+/* The play page: one section, no dock. */
+.mc-play {
+  padding-bottom: 96px;
+}
+
+.mc-play .mc-back {
+  margin-top: 44px;
+}
+
+/* CONTACT -------------------------------------------------------------------- */
 
 .mc-carrier {
   position: relative;
@@ -1381,17 +1604,33 @@ html.mc-intro-on .mc-intro {
   transition-duration: 0.12s;
 }
 
-.mc-skip {
+/* Bottom right, above the HUD's progress line: clear of the boot crosshair, which owns the centre line. */
+.mc .mc-skip {
   position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 31px;
+  right: 38px;
+  bottom: 64px;
+  min-height: 44px;
+  padding: 0 16px;
+  border: 1px solid var(--color-border-hover);
+  background: var(--color-bg);
   font-size: 11px;
   letter-spacing: 0.1em;
-  text-align: center;
   text-transform: uppercase;
+  white-space: nowrap;
+  color: var(--color-body-strong);
+  cursor: pointer;
+  animation: mc-skip-in 0.6s ease 0.8s both;
+}
+
+.mc-skip small {
+  margin-left: 8px;
+  font-size: inherit;
   color: var(--color-muted);
-  animation: mc-skip-in 0.6s ease 1.2s both;
+}
+
+.mc .mc-skip:hover {
+  border-color: var(--color-cyan);
+  color: var(--color-cyan);
 }
 
 @keyframes mc-skip-in {
@@ -1517,9 +1756,24 @@ html.mc-arm .mc-article:not([data-played]) [data-m] {
   }
 
   .mc-file,
-  .mc-graph {
+  .mc-graph,
+  .mc-personal.has-pet {
     grid-template-columns: minmax(0, 1fr);
     gap: 44px;
+  }
+
+  /* The monitor stacks: the subject on top, the two columns side by side under it. */
+  .mc-feed {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-areas:
+      'subject subject'
+      'tele emp';
+    align-items: start;
+    gap: 40px 20px;
+  }
+
+  .mc .mc-repo {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .mc-graph {
@@ -1577,7 +1831,16 @@ html.mc-arm .mc-article:not([data-played]) [data-m] {
 
   .mc-feed {
     min-height: 0;
-    padding: 56px 12px 36px;
+    padding: 56px 14px 60px;
+  }
+
+  .mc-col {
+    font-size: 10.5px;
+    letter-spacing: 0.04em;
+  }
+
+  .mc-repos ol {
+    padding-left: 26px;
   }
 
   .mc-subject {
@@ -1652,8 +1915,13 @@ html.mc-arm .mc-article:not([data-played]) [data-m] {
     padding: 40px 20px 96px;
   }
 
-  .mc-skip {
-    bottom: 44px;
+  .mc .mc-skip {
+    right: 24px;
+    bottom: 54px;
+  }
+
+  .mc-skip small {
+    display: none;
   }
 }
 
@@ -1664,7 +1932,13 @@ html.mc-arm .mc-article:not([data-played]) [data-m] {
   }
 
   .mc-out,
-  .mc-target {
+  .mc-target,
+  .mc-subject {
     transition: none;
+  }
+
+  /* There is no intro to replay. */
+  .mc .mc-replay {
+    display: none;
   }
 }

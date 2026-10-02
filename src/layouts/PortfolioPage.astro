@@ -1,6 +1,6 @@
 ---
-// The home page: the Machine's file on the asset. Six addressable sections of
-// server-rendered semantic HTML (it reads correctly with JavaScript off);
+// The home page: the Machine's file on the asset. Up to eight addressable sections
+// of server-rendered semantic HTML (it reads correctly with JavaScript off);
 // machine/runtime.ts then adds the intro, one entrance movement per section,
 // focus mode (a hash opens just that section) and the command line.
 // Every fact comes from the resume data and the writing collection; every
@@ -9,7 +9,6 @@ import '../components/machine/machine.css';
 import BaseLayout from './BaseLayout.astro';
 import MachineBar from '../components/machine/MachineBar.astro';
 import SectionHead from '../components/machine/SectionHead.astro';
-import TicTacToe from '../components/TicTacToe.astro';
 import { getContent, slugify } from '../data/content';
 import { getResume, withLocale, otherLocale, type Locale } from '../data/resume';
 import { writingByLang, articlePath, readingTime } from '../data/writing';
@@ -33,17 +32,19 @@ const copy = machineCopy[locale];
 const other = otherLocale(locale);
 const title = `${basics.name} — ${basics.label}`;
 const description = basics.summary.split('. ')[0].replace(/\.?$/, '.');
-const [user, host = 'prod'] = content.promptUser.split('@');
+const user = content.promptUser;
 const place = [basics.location.city, basics.location.countryCode].filter(Boolean).join(', ');
 const pad = (n: number) => String(n).padStart(2, '0');
-const index = (id: SectionId) => SECTIONS.indexOf(id) + 1;
+// About and open source are optional in the data: a section that has nothing to show is not there at all.
+const { about } = content;
+const repos = content.openSource.map((repo) => ({ ...repo, id: `opensource/${slugify(repo.name)}` }));
+const sections = SECTIONS.filter((id) => (id !== 'about' || about) && (id !== 'opensource' || repos.length > 0));
+const index = (id: SectionId) => sections.indexOf(id) + 1;
+const playHref = withLocale(locale, '/play/');
+// The cat answers to its own name, straight from the data.
+const catCommand = content.cat ? slugify(content.cat) : undefined;
 
-// The name wraps by word, like the intro does, instead of shrinking to a caption.
-const words = basics.name.split(/\s+/).filter(Boolean);
-const half = Math.ceil(words.length / 2);
-const nameLines = words.length <= 3 ? words : [words.slice(0, half).join(' '), words.slice(half).join(' ')];
-const nameChars = Math.max(...nameLines.map((line) => line.length));
-
+const telemetry = content.stack.filter((row) => row.items.length > 0);
 const jobs = content.experience;
 const projects = content.projects.map((project) => ({ ...project, id: `projects/${slugify(project.slug)}` }));
 const dateLocale = locale === 'en' ? 'en-US' : 'es-ES';
@@ -70,34 +71,43 @@ const linkName = (label: string) => label.replace(/\s*[↗↓]$/, '');
 const files: ShellFile[] = [
   ...(dossier ? [{ path: linkName(dossier.label), href: dossier.href, download: true }] : []),
   ...projects.map((project) => ({ path: project.id, ref: project.id })),
+  ...repos.map((repo) => ({ path: repo.id, ref: repo.id, href: repo.url, external: true })),
   ...posts.map((post) => ({ path: `${post.id}.md`, ref: post.id, href: post.href })),
   ...jobs.map((job) => ({ path: `associations/${job.id}`, ref: `associations/${job.id}` })),
   ...(primary ? [{ path: 'links/email', href: primary.href }] : []),
   ...secondary.map((link) => ({ path: `links/${linkName(link.label)}`, href: link.href, external: true })),
 ];
+// Section names and their aliases are commands. `simulation` is only a teaser here: it and its aliases open the play page.
+const aliases = Object.entries(copy.aliases);
+const commands = MACHINE_COMMANDS.filter((name) => !(SECTIONS as readonly string[]).includes(name) || (sections as readonly string[]).includes(name));
 const context: ShellContext = {
   user,
-  host,
+  host: 'machine',
   locale,
   files,
   langHref: { en: withLocale('en', '/'), es: withLocale('es', '/') },
-  t: copy.t,
-  commands: MACHINE_COMMANDS,
-  sections: { ...Object.fromEntries(SECTIONS.map((id) => [id, id])), ...copy.aliases },
+  t: catCommand ? { ...copy.t, help: { ...copy.t.help, [catCommand]: copy.catHelp } } : copy.t,
+  commands: catCommand ? [...commands.slice(0, -2), catCommand, ...commands.slice(-2)] : commands,
+  sections: Object.fromEntries([
+    ...sections.filter((id) => id !== 'simulation').map((id) => [id, id]),
+    ...aliases.filter(([, to]) => to !== 'simulation' && (sections as readonly string[]).includes(to)),
+  ]),
+  pages: Object.fromEntries(['simulation', ...aliases.filter(([, to]) => to === 'simulation').map(([name]) => name)].map((name) => [name, playHref])),
+  cat: catCommand,
 };
 const runtime = {
   context,
-  titles: Object.fromEntries(SECTIONS.map((id) => [id, copy.sections[id].title])),
+  titles: Object.fromEntries(sections.map((id) => [id, copy.sections[id].title])),
   navigating: copy.navigating,
   fullFile: copy.fullFile,
   still: copy.still,
+  catSeen: content.cat && copy.catSeen.replace('{}', content.cat),
 };
 const json = (value: unknown) => JSON.stringify(value).replace(/</g, '\\u003c');
 
 // Only the intro's scenes need data: boot, sweep, acquire, identify.
 const intro: MachineData = {
   handle: user,
-  prompt: content.promptUser,
   name: basics.name,
   role: basics.label,
   location: place,
@@ -119,7 +129,7 @@ interface Chip {
   hreflang?: Locale;
 }
 const chips: Chip[] = [
-  ...SECTIONS.map((id) => ({ label: id, run: id, href: `#${id}`, section: id })),
+  ...sections.map((id) => ({ label: id, run: id, href: id === 'simulation' ? playHref : `#${id}`, section: id })),
   ...(dossier ? [{ label: 'resume ↓', run: 'resume', href: dossier.href, download: true }] : []),
   { label: 'help', run: 'help' },
   { label: `lang ${other}`, run: `lang ${other}`, href: withLocale(other, '/'), hreflang: other },
@@ -127,6 +137,7 @@ const chips: Chip[] = [
 
 // Movement timings (seconds from the start of a section's entrance).
 const selectAt = 0.8 + jobs.length * 0.13;
+const teleAt = (i: number) => 1.75 + telemetry.slice(0, i).reduce((sum, row) => sum + 0.06 + row.items.length * 0.03, 0);
 const statusTone = (status: string) => (status === 'production' ? 'green' : status === 'active' ? 'amber' : 'white');
 const alternates = [
   { hreflang: other, path: withLocale(other, '/') },
@@ -137,7 +148,7 @@ const alternates = [
 <BaseLayout locale={locale} title={title} description={description} path={withLocale(locale, '/')} alternates={alternates}>
   {[mono500, sans400, sans500].map((href) => <link slot="head" rel="preload" as="font" type="font/woff2" href={href} crossorigin />)}
   <!-- Runs before first paint: decides intro / focus / motion so the page never flashes the wrong state. -->
-  <script is:inline define:vars={{ sections: SECTIONS }}>
+  <script is:inline define:vars={{ sections }}>
     (function () {
       var d = document.documentElement;
       var q = new URLSearchParams(location.search);
@@ -151,7 +162,7 @@ const alternates = [
       } catch (e) {}
       var still = matchMedia('(prefers-reduced-motion: reduce)').matches;
       var focus = sections.indexOf(hash) >= 0;
-      var intro = q.has('seek') || q.has('intro') || (!still && !seen && !focus && !q.has('move') && !q.has('run'));
+      var intro = q.has('seek') || q.has('intro') || (!still && !seen && !focus && !q.has('move') && !q.has('run') && !q.has('cat'));
       d.classList.add('mc-js');
       if (!still) d.classList.add('mc-arm');
       if (intro) d.classList.add('mc-intro-on');
@@ -167,46 +178,89 @@ const alternates = [
     <MachineBar promptUser={content.promptUser} locale={locale} />
 
     <main id="content">
-      <!-- 01 ASSET: the identity record. Identifiers are the stack and the languages. -->
-      <section class="mc-section mc-asset" id="asset" data-section data-dur="3.1" data-idle>
+      <!-- ASSET: the monitor. The handle under lock, stack telemetry on the left, employers on the right. -->
+      <section class="mc-section mc-asset" id="asset" data-section data-dur="3.3" data-idle>
         <div class="mc-wrap">
           <SectionHead index={index('asset')} title={copy.sections.asset.title} readout={`${copy.feed} · ${meta.lastModified ?? ''}`} label />
-          <div class="mc-feed" data-fx="asset" data-label={`REC  ${copy.feed.toUpperCase()}`}>
+          <div
+            class="mc-feed"
+            data-fx="asset"
+            data-label={`REC  ${copy.feed.toUpperCase()}`}
+            data-scene={`${pad(4)} — ${copy.scene.scenes[7]}`}
+            data-cat={content.cat && `${copy.feline} · ${content.cat}`}
+          >
             <canvas class="mc-fx" aria-hidden="true"></canvas>
             <div class="mc-subject" data-tone="cyan">
               <div class="mc-lockup">
-              <p class="mc-tags">
-                <span
-                  class="mc-tag"
-                  data-m="t"
-                  data-at="0.1"
-                  data-pre={JSON.stringify([
-                    ['red', copy.scene.unidentified, 0.35],
-                    ['amber', copy.scene.analyzing, 0.95],
-                  ])}>{copy.scene.confirmed}</span
-                >
-                <span class="mc-live" data-m="f" data-at="1.5"><i aria-hidden="true"></i>{copy.monitoring}</span>
-              </p>
-              <h1 class="mc-name mc-lock" style={`--chars:${nameChars}`} data-m="l" data-at="0.1" data-box>
-                {
-                  nameLines.map((line) => (
-                    <>
-                      <span data-m="d" data-at="0.5" data-len="0.8">
-                        {line}
-                      </span>{' '}
-                    </>
-                  ))
-                }
-              </h1>
-              <p class="mc-match" aria-hidden="true">
-                <span>{copy.scene.match}</span>
-                <i><b data-m="x" data-at="0.45" data-len="0.95"></b></i>
-                <span data-m="n" data-at="0.45" data-len="0.95">100.0%</span>
-              </p>
+                <p class="mc-tags">
+                  <span
+                    class="mc-tag"
+                    data-m="t"
+                    data-at="0.1"
+                    data-pre={JSON.stringify([
+                      ['red', copy.scene.unidentified, 0.35],
+                      ['amber', copy.scene.analyzing, 0.95],
+                    ])}>{copy.scene.confirmed}</span
+                  >
+                  <span class="mc-live" data-m="f" data-at="1.5"><i aria-hidden="true"></i>{copy.monitoring}</span>
+                </p>
+                <h1 class="mc-name mc-lock" style={`--chars:${user.length}`} data-m="l" data-at="0.1" data-box>
+                  <span data-m="d" data-at="0.5" data-len="0.8">{user}</span>
+                </h1>
+                <p class="mc-match" aria-hidden="true">
+                  <span>{copy.scene.match}</span>
+                  <i><b data-m="x" data-at="0.45" data-len="0.95"></b></i>
+                  <span data-m="n" data-at="0.45" data-len="0.95">100.0%</span>
+                </p>
               </div>
               <p class="mc-role" data-m="d" data-at="1.5">{basics.label}</p>
-              <p class="mc-loc" data-m="d" data-at="1.65">{[place, content.promptUser].filter(Boolean).join(' · ')}</p>
+              {place && <p class="mc-loc" data-m="d" data-at="1.62">{place}</p>}
+              <p class="mc-loc mc-fullname" data-m="d" data-at="1.74">{basics.name}</p>
             </div>
+
+            <dl class="mc-col mc-tele" data-col aria-label={copy.telemetry}>
+              {
+                telemetry.map((row, i) => (
+                  <div>
+                    <dt>
+                      <span aria-hidden="true">&gt; </span>
+                      <span data-m="d" data-at={teleAt(i).toFixed(2)} data-len="0.3">
+                        {row.category}
+                      </span>
+                    </dt>
+                    {row.items.map((item, j) => (
+                      <dd data-m="d" data-at={(teleAt(i) + 0.06 + j * 0.03).toFixed(2)} data-len="0.3">
+                        {item}
+                      </dd>
+                    ))}
+                  </div>
+                ))
+              }
+            </dl>
+
+            <ol class="mc-col mc-emp" data-col aria-label={copy.employment}>
+              {
+                jobs.map((job, i) => (
+                  <li>
+                    <a href={`#associations/${job.id}`}>
+                      <span class:list={['mc-emp-when', { 'is-current': job.current }]} data-m="d" data-at={(1.8 + i * 0.12).toFixed(2)} data-len="0.3">
+                        {job.period}
+                      </span>
+                      <span class="mc-emp-role" data-m="d" data-at={(1.84 + i * 0.12).toFixed(2)} data-len="0.35">
+                        {job.title}
+                      </span>
+                      <span class="mc-emp-at" data-m="d" data-at={(1.88 + i * 0.12).toFixed(2)} data-len="0.3">
+                        @ {job.company}
+                      </span>
+                    </a>
+                  </li>
+                ))
+              }
+            </ol>
+
+            <button class="mc-replay mc-js-only" type="button" data-run="replay" data-m="f" data-at="2.6">
+              <span aria-hidden="true">↻</span> {copy.replay}
+            </button>
           </div>
 
           <div class="mc-file">
@@ -272,7 +326,7 @@ const alternates = [
         </div>
       </section>
 
-      <!-- 02 ASSOCIATIONS: employers as tracked entities wired to the asset. -->
+      <!-- ASSOCIATIONS: employers as tracked entities wired to the asset. -->
       <section class="mc-section" id="associations" data-section data-dur={(selectAt + 1.5).toFixed(2)} data-idle data-select-at={selectAt.toFixed(2)}>
         <div class="mc-wrap">
           <SectionHead
@@ -362,7 +416,7 @@ const alternates = [
         </div>
       </section>
 
-      <!-- 03 PROJECTS: each one a target that gets acquired and classified. -->
+      <!-- PROJECTS: each one a target that gets acquired and classified. -->
       <section class="mc-section" id="projects" data-section data-dur="3">
         <div class="mc-wrap">
           <SectionHead
@@ -378,7 +432,7 @@ const alternates = [
                 <article class="mc-target" id={project.id} data-g data-tone={statusTone(project.status)}>
                   <p class="mc-tags">
                     <span class="mc-tag" data-m="t" data-at="0.1" data-pre={JSON.stringify([['amber', copy.classifying, 0.5]])}>
-                      {project.statusLabel}
+                      {project.status}
                     </span>
                     <span class="mc-target-meta" data-m="f" data-at="0.15">
                       {copy.target} {pad(i + 1)}
@@ -408,7 +462,53 @@ const alternates = [
         </div>
       </section>
 
-      <!-- 04 WRITING: articles as intercepted transmissions that decode. -->
+      <!-- OPEN SOURCE: public repositories as an index, not as targets: a listing on a commit rail. -->
+      {
+        repos.length > 0 && (
+          <section class="mc-section" id="opensource" data-section data-dur={(1.6 + repos.length * 0.22).toFixed(2)}>
+            <div class="mc-wrap">
+              <SectionHead
+                index={index('opensource')}
+                title={copy.sections.opensource.title}
+                readout={`${pad(repos.length)} ${copy.sections.opensource.unit}`}
+                sub={copy.sections.opensource.sub}
+              />
+              <div class="mc-repos" data-fx="opensource">
+                <canvas class="mc-fx" aria-hidden="true" />
+                <ol>
+                  {repos.map((repo, i) => (
+                    <li id={repo.id} data-g data-base={(0.3 + i * 0.22).toFixed(2)} data-tone="white">
+                      <a class="mc-repo" href={repo.url} target="_blank" rel="noopener noreferrer">
+                        <span class="mc-repo-meta">
+                          <span class="mc-tag" data-m="t" data-at="0" data-pre={JSON.stringify([['amber', copy.indexing, 0.55]])}>
+                            {copy.publicRepo}
+                          </span>
+                          <span data-m="f" data-at="0.1">
+                            {copy.repository} {pad(i + 1)} · {repo.language}
+                          </span>
+                        </span>
+                        <span class="mc-repo-name" data-m="d" data-at="0.1" data-len="0.45">
+                          {repo.name}
+                          <span aria-hidden="true"> ↗</span>
+                        </span>
+                        <span class="mc-repo-desc" data-m="r" data-at="0.45">
+                          {repo.description}
+                        </span>
+                        <span class="mc-vh">{copy.viewSource}</span>
+                      </a>
+                    </li>
+                  ))}
+                </ol>
+              </div>
+              <p class="mc-excerpt">
+                {copy.excerptEnds} <button type="button" data-run="all">{copy.fullFile}</button>
+              </p>
+            </div>
+          </section>
+        )
+      }
+
+      <!-- WRITING: articles as intercepted transmissions that decode. -->
       <section class="mc-section" id="writing" data-section data-dur={(2 + posts.length * 0.2).toFixed(2)} data-idle>
         <div class="mc-wrap">
           <SectionHead
@@ -453,7 +553,75 @@ const alternates = [
         </div>
       </section>
 
-      <!-- 05 SIMULATION: tic-tac-toe against a minimax that shows its search. -->
+      <!-- ABOUT: the personal file. With a cat in the data, the particles find it too. -->
+      {
+        about && (
+          <section class="mc-section" id="about" data-section data-dur="2.9" data-idle>
+            <div class="mc-wrap">
+              <SectionHead
+                index={index('about')}
+                title={copy.sections.about.title}
+                readout={`${pad(about.facts.length)} ${copy.sections.about.unit}`}
+                sub={copy.sections.about.sub}
+              />
+              <div class:list={['mc-personal', { 'has-pet': content.cat }]}>
+                <div class="mc-personal-file" data-tone="white">
+                  <p class="mc-tags">
+                    <span class="mc-tag" data-m="d" data-at="0.3">
+                      {copy.offDuty}
+                    </span>
+                  </p>
+                  {about.paragraphs.map((line, i) => (
+                    <p class={i === 0 ? 'mc-lead' : 'mc-personal-p'} data-m="r" data-at={(0.45 + i * 0.12).toFixed(2)}>
+                      {line}
+                    </p>
+                  ))}
+                  {about.facts.length > 0 && (
+                    <>
+                      <h3 class="mc-label" data-m="d" data-at="0.9">
+                        {copy.knownFacts}
+                      </h3>
+                      <dl class="mc-kv">
+                        {about.facts.map((fact, i) => (
+                          <div data-m="r" data-at={(1 + i * 0.1).toFixed(2)}>
+                            <dt>{fact.label}</dt>
+                            <dd>{fact.value}</dd>
+                          </div>
+                        ))}
+                      </dl>
+                    </>
+                  )}
+                </div>
+                {content.cat && (
+                  <div class="mc-pet" data-fx="about" data-tone="white" aria-hidden="true">
+                    <p class="mc-tags">
+                      <span
+                        class="mc-tag"
+                        data-m="t"
+                        data-at="0.3"
+                        data-pre={JSON.stringify([
+                          ['red', copy.scene.unidentified, 0.5],
+                          ['amber', copy.scene.analyzing, 1.3],
+                        ])}
+                      >
+                        {copy.feline} · {content.cat}
+                      </span>
+                    </p>
+                    <div class="mc-pet-box mc-lock" data-m="l" data-at="0.3">
+                      <canvas class="mc-fx" />
+                    </div>
+                  </div>
+                )}
+              </div>
+              <p class="mc-excerpt">
+                {copy.excerptEnds} <button type="button" data-run="all">{copy.fullFile}</button>
+              </p>
+            </div>
+          </section>
+        )
+      }
+
+      <!-- SIMULATION: a teaser. The game itself lives on the play page. -->
       <section class="mc-section" id="simulation" data-section data-dur="2.3">
         <div class="mc-wrap">
           <SectionHead index={index('simulation')} title={copy.sections.simulation.title} sub={copy.sections.simulation.sub} />
@@ -461,16 +629,17 @@ const alternates = [
             <canvas class="mc-fx" aria-hidden="true"></canvas>
             <p class="mc-sims-count"><b data-m="n" data-at="0.3" data-len="1.5">255,168</b> {copy.outcomes}</p>
           </div>
-          <div class="mc-sim mc-lock" data-m="l" data-at="0.45">
-            <div data-m="f" data-at="0.6" data-len="0.6">
-              <TicTacToe />
-            </div>
-          </div>
+          <p class="mc-call" data-m="r" data-at="0.7">{copy.teaser}</p>
+          <p class="mc-primary" data-tone="cyan">
+            <a class="mc-lock" href={playHref} data-m="l" data-at="1">
+              <span data-m="d" data-at="1.05">{copy.runSimulation} <span aria-hidden="true">→</span></span>
+            </a>
+          </p>
           <p class="mc-excerpt">{copy.excerptEnds} <button type="button" data-run="all">{copy.fullFile}</button></p>
         </div>
       </section>
 
-      <!-- 06 CONTACT: an open channel, and the dossier (the resume PDF). -->
+      <!-- CONTACT: an open channel, and the dossier (the resume PDF). -->
       <section class="mc-section" id="contact" data-section data-dur="2.6" data-idle>
         <div class="mc-wrap">
           <SectionHead index={index('contact')} title={copy.sections.contact.title} />
@@ -577,9 +746,9 @@ const alternates = [
     </div>
 
     <!-- The intro: a tightened cut of the Machine timeline, played once per tab. Motion only. -->
-    <div class="mc-intro" data-intro aria-hidden="true">
-      <canvas data-machine={JSON.stringify(intro)} data-copy={JSON.stringify(copy.scene)}></canvas>
-      <p class="mc-skip">{copy.skip}</p>
+    <div class="mc-intro" data-intro>
+      <canvas data-machine={JSON.stringify(intro)} data-copy={JSON.stringify(copy.scene)} aria-hidden="true"></canvas>
+      <button class="mc-skip" type="button" data-skip>{copy.skip} <span aria-hidden="true">▸▸</span> <small>{copy.skipHint}</small></button>
     </div>
   </div>
 

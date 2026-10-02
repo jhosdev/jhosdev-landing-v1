@@ -7,10 +7,11 @@
 //   ?move=0.6         freeze every section's movement at 60% (1 = settled)
 //   ?run=help;proj    run these commands after load (never navigates away)
 //   ?intro            play the intro even if this tab has already seen it
+//   ?cat=2.5          the hero's cat, frozen 2.5s after it was summoned (implies ?move=1)
 
 import { complete, execute, suggest, type Action, type ShellContext } from '../shell/commands';
 import { P, cl, lerp } from './draw';
-import { applyCues, collectCues, createMovement, settleCues, type Movement } from './motion';
+import { CAT_LEN, applyCues, collectCues, createMovement, settleCues, type Movement } from './motion';
 import type { MachineData } from './scene';
 import type { SceneCopy } from './copy';
 
@@ -20,6 +21,8 @@ interface RuntimeData {
   navigating: string;
   fullFile: string;
   still: string;
+  /** What the prompt says when the cat is summoned. Absent when the data has no cat. */
+  catSeen?: string;
 }
 
 interface Section {
@@ -59,7 +62,7 @@ function start(root: HTMLElement, data: RuntimeData) {
   const params = new URLSearchParams(location.search);
   const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
   const finePointer = matchMedia('(pointer: fine)').matches;
-  const frozen = params.has('move') ? cl(Number(params.get('move')) || 0) : null;
+  const frozen = params.has('move') ? cl(Number(params.get('move')) || 0) : params.has('cat') ? 1 : null;
   const scripted = params.has('run');
   const still = reduced || frozen !== null;
 
@@ -157,9 +160,48 @@ function start(root: HTMLElement, data: RuntimeData) {
     });
   }
 
+  /* The cat: summoned into the hero's feed, it stays a few seconds and leaves. */
+  const asset = byId('asset');
+  let leaving = 0;
+
+  function dismiss() {
+    const fx = asset?.mv.fx;
+    if (!fx) return;
+    delete fx.state.catAt;
+    fx.host.classList.remove('is-cat');
+  }
+
+  /** `after`: the section is about to play its entrance, so the cat comes right after it. `local` (frozen frames) starts it that many seconds in. */
+  function summon(after = false, local = 0, hold = false) {
+    const fx = asset?.mv.fx;
+    if (!asset || !fx) return;
+    clearTimeout(leaving);
+    fx.state.catAt = (after && !still ? asset.dur : asset.t) - (still && !local ? CAT_LEN / 2 : local);
+    if (!still) return wake();
+    fx.host.classList.add('is-cat');
+    redraw(asset);
+    if (hold) return;
+    leaving = window.setTimeout(() => {
+      dismiss();
+      redraw(asset);
+    }, 4000);
+  }
+
+  /** While the cat is in the frame the subject steps back for it. Returns true while it is there. */
+  function frameCat(t: number) {
+    const fx = asset?.mv.fx;
+    const at = fx?.state.catAt;
+    if (!fx || at === undefined || still) return false;
+    const local = t - at;
+    if (local >= CAT_LEN) dismiss();
+    else fx.host.classList.toggle('is-cat', local > 0.2 && local < CAT_LEN - 1.4);
+    return local < CAT_LEN;
+  }
+
   function frame(sec: Section, all = false) {
+    const cat = sec === asset && frameCat(sec.t);
     const pending = sec.mv.frame(sec.t, all);
-    return sec === assoc ? frameRecord(sec.t) || pending : pending;
+    return (sec === assoc ? frameRecord(sec.t) || pending : pending) || cat;
   }
 
   /** Repaints a section that is not animating: after a resize, a selection, a late font. */
@@ -175,14 +217,6 @@ function start(root: HTMLElement, data: RuntimeData) {
     sec.el.dataset.played = '';
     sec.mv.reset();
     if (sec === assoc) select(wanted);
-    if (sec.id === 'simulation') {
-      // The board redraws its grid with the movement.
-      for (const line of $$('.ttt-grid', sec.el)) {
-        line.style.animation = 'none';
-        void line.getBoundingClientRect();
-        line.style.animation = '';
-      }
-    }
     frame(sec);
     wake();
   }
@@ -191,6 +225,7 @@ function start(root: HTMLElement, data: RuntimeData) {
     sec.phase = 'armed';
     delete sec.el.dataset.played;
     sec.mv.clear();
+    if (sec === asset) dismiss();
     if (sec === assoc && selected >= 0) {
       settleCues(recordCues[selected]);
       records[selected].style.removeProperty('opacity');
@@ -330,6 +365,7 @@ function start(root: HTMLElement, data: RuntimeData) {
 
   const overlay = $('[data-intro]');
   const introCanvas = $<HTMLCanvasElement>('[data-intro] canvas');
+  const skipButton = $<HTMLButtonElement>('[data-skip]');
   const host = window as unknown as { seek?: (s: number) => void; DURATION?: number; __mc?: boolean };
 
   const warp = (x: number) => {
@@ -355,6 +391,7 @@ function start(root: HTMLElement, data: RuntimeData) {
     handoff = HANDOFF;
     check();
     if (finePointer && !skipped) input.focus({ preventScroll: true });
+    else if (document.activeElement === skipButton) skipButton.blur();
   }
 
   function skip(event: Event) {
@@ -375,6 +412,8 @@ function start(root: HTMLElement, data: RuntimeData) {
       addEventListener('pointerdown', skip, true);
       addEventListener('wheel', skip, { capture: true, passive: true });
       addEventListener('touchmove', skip, { capture: true, passive: true });
+      // The way out is a real control: first in line for the keyboard and for assistive technology.
+      skipButton.focus({ preventScroll: true });
     }
     const { createMachine, CUT_END } = await import('./scene');
     const machine = await createMachine(introCanvas, JSON.parse(introCanvas.dataset.machine ?? '{}') as MachineData, {
@@ -398,6 +437,8 @@ function start(root: HTMLElement, data: RuntimeData) {
     };
     requestAnimationFrame(step);
   }
+
+  skipButton.addEventListener('click', () => endIntro(true));
 
   /* ---------------- the command line ---------------- */
 
@@ -488,6 +529,16 @@ function start(root: HTMLElement, data: RuntimeData) {
         input.blur();
         void intro(null);
         return true;
+      case 'cat': {
+        if (!asset || !data.catSeen) return true;
+        const r = asset.el.getBoundingClientRect();
+        // Bring the hero into view first, unless it already is.
+        const away = !shown(asset) || r.bottom < innerHeight * 0.4 || r.top > innerHeight * 0.5;
+        if (away) go('asset');
+        summon(away);
+        block.append(el('p', 'mc-line', data.catSeen));
+        return true;
+      }
       case 'title':
         block.append(el('p', 'mc-line', action.text));
         return false;
@@ -679,6 +730,7 @@ function start(root: HTMLElement, data: RuntimeData) {
       sec.t = frozen * sec.dur;
       frame(sec, true);
     }
+    if (params.has('cat')) summon(false, Number(params.get('cat')) || CAT_LEN / 2, true);
     check();
   } else if (introOn) {
     void intro(params.has('seek') ? Number(params.get('seek')) || 0 : null);

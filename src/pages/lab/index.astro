@@ -6,7 +6,7 @@ import BootScene from '../../components/BootScene.astro';
 import { getContent } from '../../data/content';
 
 const content = getContent('en');
-const label = content.promptUser.split('@')[0];
+const label = content.promptUser;
 
 const experiments = [
   { href: '/lab/machine/', name: 'machine/', note: 'surveillance HUD hero, 26s authored timeline' },
