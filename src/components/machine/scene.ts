@@ -7,6 +7,7 @@ import {
   buildStreets, cl, dash as drawDash, decode, drawStreets, entPos as streetPos, font, hash, lerp, mulberry32, pad, rgb, trunc,
   type Ent, type RGB, type Streets,
 } from './draw';
+import { buildCat } from './cat';
 import type { SceneCopy } from './copy';
 
 export interface MachineData {
@@ -46,9 +47,9 @@ export const CUT_END = 14;
 const FPS = 30;
 
 interface Pt {
-  ux: number;
-  uy: number;
-  uz: number;
+  /** Where the particle sits in the cat silhouette, before it resolves into the handle. */
+  sx: number;
+  sy: number;
   tx: number;
   ty: number;
   r1: number;
@@ -270,7 +271,7 @@ export async function createMachine(cv: HTMLCanvasElement, data: MachineData, op
   }
   const drawMap = (t: number, a: number) => drawStreets(ctx, map, t, a, W, H);
 
-  // ---- particles: a rotating sphere of noise that resolves into the handle ----
+  // ---- particles: a cat that resolves into the handle ----
   function buildParticles() {
     box = wide
       ? { cx: W * 0.355, cy: (top + bot) / 2 - 6, w: W * 0.47, h: Math.min((bot - top) * 0.56, W * 0.26) }
@@ -302,15 +303,14 @@ export async function createMachine(cv: HTMLCanvasElement, data: MachineData, op
       [found[i], found[j]] = [found[j], found[i]];
     }
     const n = wide ? 3400 : 1700;
-    const golden = Math.PI * (3 - Math.sqrt(5));
+    const cat = buildCat(Math.min(box.h * 0.94, box.w * 0.7));
     pts = Array.from({ length: n }, (_, i) => {
-      const uy = 1 - (i / (n - 1)) * 2;
-      const r = Math.sqrt(1 - uy * uy);
       const f = found[i % found.length];
+      // Stride through the cat so every part of it is covered even when it has fewer points than n.
+      const s = cat.pts[(i * 7) % cat.pts.length];
       return {
-        ux: Math.cos(golden * i) * r,
-        uy,
-        uz: Math.sin(golden * i) * r,
+        sx: box.cx - cat.size / 2 + s.x,
+        sy: box.cy - cat.size / 2 + s.y,
         tx: box.cx - ow / 2 + f[0],
         ty: box.cy - oh / 2 + f[1],
         r1: rnd(),
@@ -516,28 +516,20 @@ export async function createMachine(cv: HTMLCanvasElement, data: MachineData, op
     const label = locked ? c.confirmed : t >= 7 ? c.analyzing : c.unidentified;
 
     // Particles.
-    const R = Math.min(h * 0.52, w * 0.32);
     const grow = E.outExpo(P(t, 6.5, 7.2));
-    const ry = t * 0.9;
-    const rx = 0.4 + 0.25 * Math.sin(t * 0.8);
     const sweepX = lerp(box.cx - w * 0.6, box.cx + w * 0.6, E.inOutCubic(P(t, 10, 10.45)));
     let last = '';
     for (let i = 0; i < pts.length; i++) {
       const p = pts[i];
-      const rr = R * grow * (1 + 0.08 * Math.sin(p.ux * 5 + p.uy * 4 + t * 3));
-      const x1 = p.ux * Math.cos(ry) + p.uz * Math.sin(ry);
-      const z1 = -p.ux * Math.sin(ry) + p.uz * Math.cos(ry);
-      const y2 = p.uy * Math.cos(rx) - z1 * Math.sin(rx);
-      const z2 = p.uy * Math.sin(rx) + z1 * Math.cos(rx);
-      const per = 900 / (900 + z2 * rr);
+      // The cat grows out of the centre of the box, then breathes a little while it is scanned.
+      const breathe = 1 + 0.012 * Math.sin(t * 3 + p.r1 * 6);
       const del = ((p.tx - (cx - w / 2)) / w) * 0.45 + p.r1 * 0.15;
       const k = E.inOutCubic(P(t, 8 + del, 8.75 + del));
       const arc = Math.sin(k * Math.PI);
-      const depth = (1 - z2) / 2;
-      const x = lerp(cx + x1 * rr * per, p.tx, k) + arc * (p.r1 - 0.5) * 120;
-      const y = lerp(cy + y2 * rr * per, p.ty, k) - arc * (30 + p.r2 * 90) * (p.r2 < 0.5 ? 1 : -1);
-      const sz = lerp(1 + depth * 2.2, 2, k);
-      const bucket = Math.round(lerp(0.2 + depth * 0.8, 1, k) * 5) / 5;
+      const x = lerp(cx + (p.sx - cx) * grow * breathe, p.tx, k) + arc * (p.r1 - 0.5) * 120;
+      const y = lerp(cy + (p.sy - cy) * grow * breathe, p.ty, k) - arc * (30 + p.r2 * 90) * (p.r2 < 0.5 ? 1 : -1);
+      const sz = lerp(1.8, 2, k);
+      const bucket = Math.round(lerp(0.6 + p.r2 * 0.4, 1, k) * 5) / 5;
       const style = locked && x < sweepX ? rgb(CYAN) : rgb(k > 0.5 ? TEXT : BODY, bucket);
       if (style !== last) ctx.fillStyle = last = style;
       ctx.fillRect(x - sz / 2, y - sz / 2, sz, sz);
