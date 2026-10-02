@@ -74,6 +74,8 @@ interface MachineVoice {
   simulation: string;
   /** The word on the home's invitation to it. */
   play: string;
+  /** What the Machine is called, in every language. */
+  self: string;
   handshake: string;
   channelOpen: string;
   dossier: string;
@@ -94,7 +96,7 @@ interface HumanCopy {
   read: string;
   viewSource: string;
   outcomes: string;
-  /** The home's invitation to the play page. */
+  /** The home's invitation to the play page; {} is the Machine's name. */
   teaser: string;
   /** One sentence under the play page's heading. */
   playSub: string;
@@ -186,6 +188,7 @@ const MACHINE: MachineVoice = {
   feline: 'Feline',
   simulation: 'Simulation',
   play: 'Play',
+  self: 'the Machine',
   handshake: 'Handshake',
   channelOpen: 'Channel open',
   dossier: 'Dossier',
@@ -236,7 +239,7 @@ const HUMAN: Record<ShellLocale, HumanCopy> = {
     read: 'read transmission',
     viewSource: 'view source',
     outcomes: 'possible games',
-    teaser: 'Bored? Play against the Machine at tic-tac-toe.',
+    teaser: 'Bored? Play against {} at tic-tac-toe.',
     playTitle: 'Play the Machine',
     playDescription: 'Tic-tac-toe against a minimax search you can watch think.',
     download: 'download',
@@ -291,7 +294,7 @@ const HUMAN: Record<ShellLocale, HumanCopy> = {
     read: 'leer transmisión',
     viewSource: 'ver código',
     outcomes: 'partidas posibles',
-    teaser: '¿Aburrido? Juega contra la Máquina al tres en raya.',
+    teaser: '¿Aburrido? Juega contra {} al tres en raya.',
     playTitle: 'Juega contra la Máquina',
     playDescription: 'Tres en raya contra una búsqueda minimax que puedes ver pensar.',
     download: 'descargar',

@@ -29,6 +29,8 @@ const { locale } = Astro.props;
 const { basics, meta } = getResume(locale);
 const content = getContent(locale);
 const copy = machineCopy[locale];
+// The invitation names the Machine in the middle of its sentence.
+const teaser = copy.teaser.split('{}');
 const other = otherLocale(locale);
 const title = `${basics.name} — ${basics.label}`;
 const description = basics.summary.split('. ')[0].replace(/\.?$/, '.');
@@ -195,7 +197,9 @@ const alternates = [
                 <circle class="is-o" style="--i:5" pathLength="1" cx="15" cy="6" r="2.6" />
                 <path class="is-win" style="--i:6.4" pathLength="1" d="M1.5 6h27" />
               </svg>
-              <span class="mc-invite-text">{copy.teaser}</span>
+              <span class="mc-invite-text">
+                {teaser[0]}<span class="mc-invite-name">{copy.self}</span>{teaser[1]}
+              </span>
               <span class="mc-invite-go">{copy.play} <span aria-hidden="true">→</span></span>
             </a>
           </p>
