@@ -7,8 +7,8 @@
 // Used by the home page (runtime.ts) and the article pages.
 
 import {
-  AMBER, BG, BODY, BODY_STRONG, CYAN, E, FAINT, GREEN, MUTED, P, RED, TAU, TEXT,
-  along, buildStreets, cl, dash, decode, drawStreets, entPos, font, hash, lerp, mulberry32, pad, rgb,
+  AMBER, BG, BODY, CYAN, E, FAINT, GREEN, MUTED, P, RED, TAU, TEXT,
+  along, buildStreets, cl, dash, decode, drawStreets, entPos, font, hash, lerp, pad, rgb,
   type RGB, type Streets,
 } from './draw';
 import { buildCat, drawCat } from './cat';
@@ -588,62 +588,6 @@ const writing: Painter = (fx, t) => {
   L.forEach((w, i) => wave(fx, w.box, t, t - (w.group ? (fx.start.get(w.group) ?? 0) : 0), i + 1));
 };
 
-const WINS = [
-  [0, 1, 2], [3, 4, 5], [6, 7, 8], [0, 3, 6], [1, 4, 7], [2, 5, 8], [0, 4, 8], [2, 4, 6],
-];
-
-/** Distance between two mini boards in the simulation strip. */
-const PITCH = 34;
-
-/** 05 SIMULATION: a strip of games played out to the end, the way the Machine tries every branch. */
-const simulation: Painter = (fx, t) => {
-  const { ctx, W, H, calm } = fx;
-  const games = memo(fx, 'games', () => {
-    const label = fx.host.querySelector('.mc-sims-count');
-    const room = (label ? fx.box(label).x : W) - 24;
-    const n = Math.max(0, Math.floor(room / PITCH));
-    return Array.from({ length: n }, (_, g) => {
-      const rnd = mulberry32(g * 977 + 13);
-      const order = [0, 1, 2, 3, 4, 5, 6, 7, 8];
-      for (let i = 8; i > 0; i--) {
-        const j = Math.floor(rnd() * (i + 1));
-        [order[i], order[j]] = [order[j], order[i]];
-      }
-      const cells: number[] = Array(9).fill(0);
-      let moves = 9;
-      let won = 0;
-      for (let m = 0; m < 9 && !won; m++) {
-        cells[order[m]] = (m % 2) + 1;
-        if (WINS.some((w) => w.every((c) => cells[c] === (m % 2) + 1))) {
-          won = (m % 2) + 1;
-          moves = m + 1;
-        }
-      }
-      return { order, moves, won, at: 0.2 + (g / Math.max(1, n)) * 0.9 };
-    });
-  });
-  ctx.clearRect(0, 0, W, H);
-  const top = (H - 28) / 2;
-  games.forEach((game, g) => {
-    const x0 = g * PITCH;
-    const shown = calm ? game.moves : cl(Math.floor((t - game.at) / 0.07), -1, game.moves);
-    if (shown < 0) return;
-    const over = shown >= game.moves;
-    for (let c = 0; c < 9; c++) {
-      const m = game.order.indexOf(c);
-      const mark = m < shown ? (m % 2) + 1 : 0;
-      const fresh = !calm && m === shown - 1 && !over;
-      ctx.fillStyle = mark === 0 ? rgb(FAINT, 0.7) : fresh ? rgb(TEXT) : rgb(mark === 1 ? BODY_STRONG : CYAN, over ? 0.55 : 1);
-      ctx.fillRect(x0 + (c % 3) * 7, top + Math.floor(c / 3) * 7, 5, 5);
-    }
-    if (over) {
-      // Verdict, in the game panel's own legend: green = the Machine wins.
-      ctx.fillStyle = rgb(game.won === 2 ? GREEN : game.won === 1 ? BODY_STRONG : MUTED);
-      ctx.fillRect(x0, top + 24, 19, 2);
-    }
-  });
-};
-
 /** 06 CONTACT: two signals out of phase negotiate, then lock into one carrier. */
 const contact: Painter = (fx, t) => {
   const { ctx, W, H, calm } = fx;
@@ -677,7 +621,7 @@ const contact: Painter = (fx, t) => {
   }
 };
 
-const painters: Record<string, Painter> = { asset, associations, projects, opensource, writing, about, simulation, contact };
+const painters: Record<string, Painter> = { asset, associations, projects, opensource, writing, about, contact };
 
 /* -------------------------------------------------------------- movement */
 

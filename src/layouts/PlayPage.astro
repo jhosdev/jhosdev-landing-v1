@@ -33,12 +33,12 @@ const alternates = [
     <main id="content">
       <section class="mc-section">
         <div class="mc-wrap">
-          <SectionHead index={1} title={copy.sections.simulation.title} readout={`255,168 ${copy.outcomes}`} sub={copy.sections.simulation.sub} />
+          <SectionHead index={1} title={copy.simulation} readout={`255,168 ${copy.outcomes}`} sub={copy.playSub} />
           <div class="mc-sim mc-lock">
             <TicTacToe />
           </div>
           <p class="mc-outs mc-back">
-            <a href={`${home}#simulation`}><span aria-hidden="true">←</span> {copy.fullFile}</a>
+            <a href={home}><span aria-hidden="true">←</span> {copy.fullFile}</a>
           </p>
         </div>
       </section>

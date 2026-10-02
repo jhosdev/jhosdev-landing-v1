@@ -13,12 +13,12 @@
 import type { ShellLocale, ShellStrings } from '../shell/commands';
 import { shellCopy } from '../shell/copy';
 
-/** Addressable sections, in page order. Each id is a URL hash; all but `simulation` (a teaser for /play/) are also commands. */
-export const SECTIONS = ['asset', 'associations', 'projects', 'opensource', 'writing', 'about', 'simulation', 'contact'] as const;
+/** Addressable sections, in page order. Each id is a URL hash and a command. */
+export const SECTIONS = ['asset', 'about', 'associations', 'projects', 'opensource', 'writing', 'contact'] as const;
 export type SectionId = (typeof SECTIONS)[number];
 
-/** Commands offered by `help` and tab completion on the home page, in display order. */
-export const MACHINE_COMMANDS = [...SECTIONS, 'open', 'resume', 'lang', 'all', 'replay', 'help', 'clear'] as const;
+/** Commands offered by `help` and tab completion on the home page, in display order. `simulation` is not a section: it opens the play page. */
+export const MACHINE_COMMANDS = [...SECTIONS, 'simulation', 'open', 'resume', 'lang', 'all', 'replay', 'help', 'clear'] as const;
 
 /** Strings drawn on the canvas by the authored intro (scene.ts). */
 export interface SceneCopy {
@@ -70,7 +70,10 @@ interface MachineVoice {
   offDuty: string;
   knownFacts: string;
   feline: string;
-  runSimulation: string;
+  /** The play page's title. */
+  simulation: string;
+  /** The word on the home's invitation to it. */
+  play: string;
   handshake: string;
   channelOpen: string;
   dossier: string;
@@ -91,8 +94,10 @@ interface HumanCopy {
   read: string;
   viewSource: string;
   outcomes: string;
-  /** The home's pointer to the play page. */
+  /** The home's invitation to the play page. */
   teaser: string;
+  /** One sentence under the play page's heading. */
+  playSub: string;
   playTitle: string;
   playDescription: string;
   download: string;
@@ -150,12 +155,11 @@ const MACHINE: MachineVoice = {
   },
   sections: {
     asset: { title: 'Asset', unit: '' },
+    about: { title: 'Personal file', unit: 'facts' },
     associations: { title: 'Known associations', unit: 'entities' },
     projects: { title: 'Projects', unit: 'targets' },
     opensource: { title: 'Open source', unit: 'repositories' },
     writing: { title: 'Writing', unit: 'intercepted' },
-    about: { title: 'Personal file', unit: 'facts' },
-    simulation: { title: 'Simulation', unit: 'outcomes' },
     contact: { title: 'Contact', unit: '' },
   },
   monitoring: 'Monitoring',
@@ -180,7 +184,8 @@ const MACHINE: MachineVoice = {
   offDuty: 'Off duty',
   knownFacts: 'Known facts',
   feline: 'Feline',
-  runSimulation: 'Run simulation',
+  simulation: 'Simulation',
+  play: 'Play',
   handshake: 'Handshake',
   channelOpen: 'Channel open',
   dossier: 'Dossier',
@@ -225,9 +230,9 @@ const HUMAN: Record<ShellLocale, HumanCopy> = {
       opensource: 'Code the asset left in the open. Every repository links to its source.',
       writing: 'Transmissions intercepted from the asset. Each one decodes into an article.',
       about: 'What the asset does when nobody is paying for it.',
-      simulation: 'The Machine runs every outcome before it moves.',
       contact: '',
     },
+    playSub: 'The Machine runs every outcome before it moves.',
     read: 'read transmission',
     viewSource: 'view source',
     outcomes: 'possible games',
@@ -280,9 +285,9 @@ const HUMAN: Record<ShellLocale, HumanCopy> = {
       opensource: 'Código que el asset dejó a la vista. Cada repositorio enlaza a su fuente.',
       writing: 'Transmisiones interceptadas al asset. Cada una se decodifica en un artículo.',
       about: 'Lo que hace el asset cuando nadie le paga por ello.',
-      simulation: 'La Máquina recorre cada desenlace antes de mover.',
       contact: '',
     },
+    playSub: 'La Máquina recorre cada desenlace antes de mover.',
     read: 'leer transmisión',
     viewSource: 'ver código',
     outcomes: 'partidas posibles',

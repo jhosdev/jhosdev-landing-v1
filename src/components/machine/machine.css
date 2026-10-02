@@ -376,7 +376,6 @@ html[data-focus='projects'] #projects,
 html[data-focus='opensource'] #opensource,
 html[data-focus='writing'] #writing,
 html[data-focus='about'] #about,
-html[data-focus='simulation'] #simulation,
 html[data-focus='contact'] #contact {
   display: block;
   padding-top: 40px;
@@ -407,6 +406,112 @@ html.mc-js[data-focus] .mc-excerpt {
   background: none;
   color: var(--color-amber);
   cursor: pointer;
+}
+
+/* The invitation to the play page: a link dressed as a button, above the file. */
+.mc-invite-row {
+  margin-bottom: 18px;
+}
+
+.mc .mc-invite {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 44px;
+  padding: 6px 8px 6px 10px;
+  border: 1px dashed var(--color-cyan);
+  background: var(--color-panel);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.3;
+  color: var(--color-body-strong);
+  transition:
+    background-color 0.2s,
+    color 0.2s;
+}
+
+.mc .mc-invite:hover {
+  opacity: 1;
+  border-style: solid;
+  background: var(--color-border);
+  color: var(--color-text);
+}
+
+.mc-invite-go {
+  align-self: stretch;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  background: var(--color-cyan);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  color: var(--color-bg);
+}
+
+.mc-invite-go span {
+  transition: transform 0.2s;
+}
+
+.mc-invite:hover .mc-invite-go span {
+  transform: translateX(3px);
+}
+
+/* A tiny game that plays itself: six moves, then the Machine's three in a row. */
+.mc-ttt {
+  flex: none;
+  fill: none;
+  stroke: var(--color-body-strong);
+  stroke-width: 1.5;
+  stroke-linecap: square;
+}
+
+.mc-ttt-grid {
+  stroke: var(--color-muted);
+  stroke-width: 1;
+}
+
+.mc-ttt .is-o {
+  stroke: var(--color-cyan);
+}
+
+.mc-ttt .is-win {
+  stroke: var(--color-green);
+  stroke-width: 2;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .mc-ttt [style] {
+    stroke-dasharray: 1;
+    animation: mc-ttt 7s calc(var(--i) * 0.45s) linear infinite backwards;
+  }
+
+  /* Hovering plays it faster. */
+  .mc-invite:hover .mc-ttt [style] {
+    animation-duration: 3.2s;
+    animation-delay: calc(var(--i) * 0.2s);
+  }
+}
+
+@keyframes mc-ttt {
+  0% {
+    stroke-dashoffset: 1;
+    opacity: 1;
+  }
+  5%,
+  62% {
+    stroke-dashoffset: 0;
+    opacity: 1;
+  }
+  66%,
+  100% {
+    stroke-dashoffset: 0;
+    opacity: 0;
+  }
 }
 
 /* 01 ASSET ------------------------------------------------------------------ */
@@ -1140,30 +1245,7 @@ html.mc-js[data-focus] .mc-excerpt {
   background: var(--color-bg);
 }
 
-/* SIMULATION (the home's teaser, and the play page) --------------------------- */
-
-.mc-sims {
-  position: relative;
-  display: flex;
-  justify-content: flex-end;
-  align-items: center;
-  max-width: 860px;
-  height: 40px;
-  margin-bottom: 8px;
-}
-
-.mc-sims-count {
-  position: relative;
-  font-size: 11px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--color-nav);
-}
-
-.mc-sims-count b {
-  font-weight: 500;
-  color: var(--color-text);
-}
+/* SIMULATION (the play page) ------------------------------------------------- */
 
 .mc .mc-sim {
   --lp: 16px;
@@ -1933,7 +2015,9 @@ html.mc-arm .mc-article:not([data-played]) [data-m] {
 
   .mc-out,
   .mc-target,
-  .mc-subject {
+  .mc-subject,
+  .mc-invite,
+  .mc-invite-go span {
     transition: none;
   }
 
