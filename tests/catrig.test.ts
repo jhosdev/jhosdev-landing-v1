@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { BODY_PART, DUTY, POUNCE, STRIDE, contourField, field, newPose, newShape, pouncePose, sitPose, skin, walkFoot, walkPose } from '../src/components/machine/catrig';
+import { BODY_PART, DUTY, HIDDEN, POUNCE, STRIDE, field, newPose, newShape, place, pouncePose, sitPose, skin, swarm, walkFoot, walkPose, type Swarm } from '../src/components/machine/catrig';
 import { DEFAULT_INTRO, INTROS, homeCut } from '../src/components/machine/scene';
+import { addedTime } from '../src/components/machine/catphase';
 
 describe('the cat walks, it does not slide', () => {
   const feet = new Float32Array(16);
@@ -71,7 +72,7 @@ describe('the outline', () => {
   it('is the distance to the shape: zero on the edge of a lone disc', () => {
     const s = newShape();
     s.discs.push(10, 10, 3);
-    s.parts.push(3, BODY_PART, 0, 0);
+    s.parts.push(3, BODY_PART);
     const f = field(s, 0.25);
     const at = (x: number, y: number) => f.d[Math.round((y - f.y0) / f.g) * f.nx + Math.round((x - f.x0) / f.g)];
     expect(at(10, 10)).toBeCloseTo(-3, 1);
@@ -79,44 +80,72 @@ describe('the outline', () => {
     expect(at(14, 10)).toBeGreaterThan(0.8);
   });
 
-  it('contours every pose into closed outlines', () => {
-    const p = newPose();
-    const s = newShape();
-    for (let t = 0; t < 2.4; t += 0.3) {
-      walkPose(p, t);
-      skin(p, s);
-      let open = 0;
-      let points = 0;
-      contourField(
-        {
-          moveTo: () => {
-            open++;
-            points++;
-          },
-          lineTo: (x, y) => {
-            expect(Number.isFinite(x) && Number.isFinite(y)).toBe(true);
-            points++;
-          },
-          closePath: () => open--,
-        },
-        field(s, 0.4),
-        0,
-        0,
-        1,
-      );
-      expect(open).toBe(0);
-      expect(points).toBeGreaterThan(100);
+});
+
+describe('the particles', () => {
+  const p = newPose();
+  const s = newShape();
+  // The walk (the far legs swing under the near ones, it sits) and a sitting cat whose head turns past the camera.
+  const moves = [
+    [(t: number) => walkPose(p, t), 0.2, 2.3],
+    [(t: number) => sitPose(p, 0.5 * Math.sin(t * 3), Math.cos(t)), 0, 3],
+  ] as const;
+  const cat = (pose: (t: number) => void, from: number, to: number) => {
+    const shapes = [from, (from + to) / 2, to].map((t) => {
+      const sh = newShape();
+      pose(t);
+      skin(p, sh);
+      return sh;
+    });
+    return [0, 1, 2].map(() => swarm(shapes, 0.45, 0.15));
+  };
+  const at = (pose: (t: number) => void, t: number, w: Swarm) => {
+    pose(t);
+    skin(p, s);
+    place(w, s, field(s, 0.3), 0, 0, 1);
+  };
+
+  it('keep their place on the body: over three frames close together, no particle jumps', () => {
+    // A particle re-sampled or swapped with another would jump about one spacing (0.45) between frames;
+    // one that follows its place moves smoothly, and its second difference all but vanishes.
+    const dt = 1 / 3840;
+    for (const [pose, from, to] of moves) {
+      const w = cat(pose, from, to);
+      let worst = 0;
+      let fewest = Infinity;
+      for (let t = from; t < to; t += 0.03) {
+        w.forEach((x, k) => at(pose, t + k * dt, x));
+        let shown = 0;
+        for (let i = 0; i < w[0].n; i++) {
+          if (w[0].tone[i] === HIDDEN || w[1].tone[i] === HIDDEN || w[2].tone[i] === HIDDEN) continue;
+          shown++;
+          worst = Math.max(worst, Math.hypot(w[0].x[i] - 2 * w[1].x[i] + w[2].x[i], w[0].y[i] - 2 * w[1].y[i] + w[2].y[i]));
+        }
+        fewest = Math.min(fewest, shown);
+      }
+      expect(worst).toBeLessThan(0.35);
+      expect(fewest).toBeGreaterThan(1500);
+    }
+  });
+
+  it('stand on the ground: none goes below the floor', () => {
+    const [pose, from, to] = moves[0];
+    const [w] = cat(pose, from, to);
+    for (let t = 0; t < 2.4; t += 0.05) {
+      at(pose, t, w);
+      // Screen y is down and the floor is y = 0; a dot may straddle it by half its width.
+      for (let i = 0; i < w.n; i++) if (w.tone[i] !== HIDDEN) expect(w.y[i]).toBeLessThan(0.3);
     }
   });
 });
 
 describe('the home cut', () => {
-  it('is as long as before for the default cat, and at most 1.5s longer for any other', () => {
-    expect(homeCut(DEFAULT_INTRO).at(-1)![0]).toBeCloseTo(11.2, 6);
+  it('adds at most 0.7s for the default cat, at most 2.1s for any other, and runs forward', () => {
+    expect(homeCut(DEFAULT_INTRO).at(-1)![0] - 11.2).toBeLessThan(0.7);
     for (const name of INTROS) {
       const cut = homeCut(name);
-      expect(cut.at(-1)![0] - 11.2).toBeLessThan(1.5 + 1e-6);
-      // Time only ever runs forward.
+      expect(cut.at(-1)![0] - 11.2).toBeCloseTo(addedTime(name), 6);
+      expect(addedTime(name)).toBeLessThan(2.1);
       for (let i = 1; i < cut.length; i++) expect(cut[i][0]).toBeGreaterThan(cut[i - 1][0]);
     }
   });

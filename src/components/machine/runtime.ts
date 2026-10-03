@@ -7,11 +7,11 @@
 //   ?move=0.6         freeze every section's movement at 60% (1 = settled)
 //   ?run=help;proj    run these commands after load (never navigates away)
 //   ?intro            play the intro even if this tab has already seen it
-//   ?intro=walk       ...with that cat (sit, walk, silhouette, pounce, peek); combines with ?seek=
+//   ?intro=walk       ...with that cat (sit, walk, silhouette, pounce); combines with ?seek=
 //   ?cat=2.5          the hero's cat, frozen 2.5s after it was summoned (implies ?move=1)
 
 import { complete, execute, suggest, type Action, type ShellContext } from '../shell/commands';
-import { P, cl, lerp } from './draw';
+import { P, cl } from './draw';
 import { CAT_LEN, applyCues, collectCues, createMovement, settleCues, type Movement } from './motion';
 import type { MachineData } from './scene';
 import type { SceneCopy } from './copy';
@@ -400,7 +400,7 @@ function start(root: HTMLElement, data: RuntimeData) {
       // The way out is a real control: first in line for the keyboard and for assistive technology.
       skipButton.focus({ preventScroll: true });
     }
-    const { createMachine, homeCut, introName, CUT_END } = await import('./scene');
+    const { createMachine, along, homeCut, introName, CUT_END } = await import('./scene');
     const variant = introName(params.get('intro'));
     const machine = await createMachine(introCanvas, JSON.parse(introCanvas.dataset.machine ?? '{}') as MachineData, {
       copy: JSON.parse(introCanvas.dataset.copy ?? '{}') as SceneCopy,
@@ -411,13 +411,7 @@ function start(root: HTMLElement, data: RuntimeData) {
     // Intro time -> timeline time: the same scenes, cut tighter.
     const cut = homeCut(variant);
     const INTRO_END = cut[cut.length - 1][0];
-    const warp = (x: number) => {
-      for (let i = 1; i < cut.length; i++) {
-        if (x <= cut[i][0]) return lerp(cut[i - 1][1], cut[i][1], P(x, cut[i - 1][0], cut[i][0]));
-      }
-      return CUT_END;
-    };
-    const render = (s: number) => machine.render(Math.min(warp(Math.max(0, s)), CUT_END - 0.001));
+    const render = (s: number) => machine.render(Math.min(along(cut, Math.max(0, s)), CUT_END - 0.001));
     host.seek = render;
     host.DURATION = INTRO_END;
     if (freeze !== null) return render(freeze);

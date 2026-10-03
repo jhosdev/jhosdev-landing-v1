@@ -7,20 +7,21 @@ import {
   buildStreets, cl, dash as drawDash, decode, drawStreets, entPos as streetPos, font, hash, lerp, mulberry32, pad, rgb, trunc,
   type Ent, type RGB, type Streets,
 } from './draw';
-import { sampleSolid } from './cat';
-import { CAT_AT, CUT_RATE, DEFAULT_INTRO, VARIANT, catPhase, type IntroName } from './catphase';
+import { CYAN_TONE, drawDots } from './cat';
+import { HIDDEN, LIT } from './catrig';
+import { CUT_RATE, DEFAULT_INTRO, TEAR, VARIANT, catCut, catPhase, type CatPhase, type IntroName } from './catphase';
 import type { SceneCopy } from './copy';
 
-export { INTROS, DEFAULT_INTRO, introName, type IntroName } from './catphase';
+export { INTROS, DEFAULT_INTRO, along, introName, type IntroName } from './catphase';
 /**
  * Home time -> timeline time for the home's cut: the same scenes, cut tighter (boot, sweep,
- * acquire, identify). A variant that needs room gets it in its cat phase, played closer to real time.
+ * acquire, identify). The cat phase keeps its own pace (catCut): the cat materialises, then moves.
  */
 export function homeCut(name: IntroName): number[][] {
-  const { morph, extra } = VARIANT[name];
-  const at = 4.7 + (morph - CAT_AT) / CUT_RATE + extra;
+  const cat = catCut(name).map(([h, t]) => [4.7 + h, t]);
+  const [at, morph] = cat[cat.length - 1];
   const end = at + (10.5 - morph) / CUT_RATE;
-  return [[0, 0], [2, 2.5], [4.7, 6.5], [at, morph], [end, 10.5], [end + 3.5, CUT_END]];
+  return [[0, 0], [2, 2.5], ...cat, [end, 10.5], [end + 3.5, CUT_END]];
 }
 
 export interface MachineData {
@@ -132,7 +133,13 @@ export async function createMachine(cv: HTMLCanvasElement, data: MachineData, op
   let tracked: number[] = [];
   let idleTracked: number[] = [];
   let pts: Pt[] = [];
-  let act: Act | null = null;
+  let phase: CatPhase | null = null;
+  /** The cat as it is when it starts resolving: where each of its particles is, its tone, and which ones show. */
+  let still = { x: new Float32Array(0), y: new Float32Array(0), tone: new Uint8Array(0), seen: new Int32Array(0) };
+  /** The handle's particles this frame. */
+  let hx = new Float32Array(0);
+  let hy = new Float32Array(0);
+  let ht = new Uint8Array(0);
   let box = { cx: 0, cy: 0, w: 0, h: 0 };
   let dotPattern: CanvasPattern | null = null;
   let scanPattern: CanvasPattern | null = null;
@@ -287,64 +294,16 @@ export async function createMachine(cv: HTMLCanvasElement, data: MachineData, op
   }
   const drawMap = (t: number, a: number) => drawStreets(ctx, map, t, a, W, H);
 
-  // ---- particles: a cat that resolves into the handle ----
-  /** The cat phase of ACQUIRE. Every variant is a pure function of time and hands the same particles to the handle. */
-  interface Act {
-    /** Particle size while it is part of the cat. */
-    dot: number;
-    /** Sets up time t; `place` then answers for that frame. */
-    frame: (t: number) => void;
-    /** Writes particle i's position into `at`; returns its opacity. */
-    place: (i: number) => number;
-    /** Drawn under / over the particles. `a` goes to 0 as they leave for the handle. */
-    under?: (t: number, a: number) => void;
-    over?: (t: number, a: number) => void;
-  }
-  const at = [0, 0];
-
-  /**
-   * A cat drawn solid, as one filled shape (catphase.ts). At MORPH the particles take its place: they are sampled from that very
-   * frame and packed inside its outline, so nothing changes on screen; the shape then fades from under them as they leave.
-   */
-  function solidAct(n: number): Act {
-    const phase = catPhase(variant, { ...box, wide }, dpr);
-    const room = 60;
-    const x0 = box.cx - box.w / 2 - room;
-    const y0 = box.cy - box.h / 2 - room;
-    const s = sampleSolid(box.w + 2 * room, box.h + 2 * room, n, (o) => {
-      o.translate(-x0, -y0);
-      phase.paint(o, MORPH);
-    });
-    let on = 0;
-    return {
-      dot: s.step * 1.08,
-      frame(t) {
-        on = t >= MORPH - 0.03 ? 1 : 0;
-      },
-      place(i) {
-        // Every sample is used, evenly, whether there are more particles or more samples.
-        const q = s.pts[Math.floor((i * s.pts.length) / pts.length) % s.pts.length];
-        at[0] = x0 + q[0];
-        at[1] = y0 + q[1];
-        return on;
-      },
-      under(t, a) {
-        phase.under?.(ctx, t, a);
-        const solid = 1 - P(t, MORPH, MORPH + 0.24);
-        if (solid <= 0) return;
-        ctx.save();
-        ctx.globalAlpha = solid;
-        phase.paint(ctx, Math.min(t, MORPH));
-        ctx.restore();
-      },
-      over: phase.over && ((t, a) => phase.over?.(ctx, t, a)),
-    };
-  }
-
+  // ---- particles: a cat (catphase.ts) that resolves into the handle ----
   function buildParticles() {
     box = wide
       ? { cx: W * 0.355, cy: (top + bot) / 2 - 6, w: W * 0.47, h: Math.min((bot - top) * 0.56, W * 0.26) }
       : { cx: W / 2, cy: top + 34 + H * 0.19, w: W - 2 * m - 20, h: H * 0.38 };
+    phase = catPhase(variant, { ...box, wide });
+    const cat = phase.frame(MORPH);
+    const seen: number[] = [];
+    for (let i = 0; i < cat.n; i++) if (cat.tone[i] !== HIDDEN) seen.push(i);
+    still = { x: cat.x.slice(), y: cat.y.slice(), tone: cat.tone.slice(), seen: Int32Array.from(seen) };
     const ow = Math.max(8, Math.round(box.w));
     const oh = Math.max(8, Math.round(box.h));
     const off = document.createElement('canvas');
@@ -371,12 +330,15 @@ export async function createMachine(cv: HTMLCanvasElement, data: MachineData, op
       const j = Math.floor(rnd() * (i + 1));
       [found[i], found[j]] = [found[j], found[i]];
     }
-    const n = wide ? 3400 : 1700;
+    // At least one handle particle for every particle of the cat, so none of the cat's vanishes when they leave.
+    const n = Math.max(wide ? 3400 : 1700, seen.length);
     pts = Array.from({ length: n }, (_, i) => {
       const f = found[i % found.length];
       return { tx: box.cx - ow / 2 + f[0], ty: box.cy - oh / 2 + f[1], r1: rnd(), r2: rnd() };
     });
-    act = solidAct(n);
+    hx = new Float32Array(n);
+    hy = new Float32Array(n);
+    ht = new Uint8Array(n);
   }
 
   // =====================================================================
@@ -579,26 +541,28 @@ export async function createMachine(cv: HTMLCanvasElement, data: MachineData, op
     const sweepX = lerp(box.cx - w * 0.6, box.cx + w * 0.6, E.inOutCubic(P(t, 10, 10.45)));
     const pace = Math.min(1, (9.86 - MORPH) / 1.14);
     const leave = 1 - P(t, MORPH, MORPH + 0.16);
-    if (act) {
-      act.frame(t);
-      act.under?.(t, leave);
-      let last = '';
-      for (let i = 0; i < pts.length; i++) {
-        const p = pts[i];
-        const a = act.place(i);
-        const del = MORPH + (((p.tx - (cx - w / 2)) / w) * 0.4 + p.r1 * 0.12) * pace;
-        const k = E.inOutCubic(P(t, del, del + 0.62 * pace));
-        const alpha = Math.round(lerp(a, 1, k) * 5) / 5;
-        if (alpha <= 0) continue;
-        const arc = Math.sin(k * Math.PI);
-        const x = lerp(at[0], p.tx, k) + arc * (p.r1 - 0.5) * 120;
-        const y = lerp(at[1], p.ty, k) - arc * (30 + p.r2 * 90) * (p.r2 < 0.5 ? 1 : -1);
-        const sz = lerp(act.dot, 2, k);
-        const style = locked && x < sweepX ? rgb(CYAN) : rgb(TEXT, alpha);
-        if (style !== last) ctx.fillStyle = last = style;
-        ctx.fillRect(x - sz / 2, y - sz / 2, sz, sz);
+    if (phase) {
+      phase.under?.(ctx, t, leave);
+      if (t < MORPH) {
+        const cat = phase.frame(t);
+        drawDots(ctx, cat.x, cat.y, cat.tone, cat.n);
+      } else {
+        // Each particle of the handle starts on one of the cat's (all of them used, evenly).
+        const V = still.seen.length;
+        for (let i = 0; i < pts.length; i++) {
+          const p = pts[i];
+          const c = still.seen[Math.floor((i * V) / pts.length)];
+          const del = MORPH + (((p.tx - (cx - w / 2)) / w) * 0.4 + p.r1 * 0.12) * pace;
+          const k = E.inOutCubic(P(t, del, del + 0.62 * pace));
+          const arc = Math.sin(k * Math.PI);
+          const x = lerp(still.x[c], p.tx, k) + arc * (p.r1 - 0.5) * 120;
+          hx[i] = x;
+          hy[i] = lerp(still.y[c], p.ty, k) - arc * (30 + p.r2 * 90) * (p.r2 < 0.5 ? 1 : -1);
+          ht[i] = locked && x < sweepX ? CYAN_TONE : k > 0.5 ? LIT : still.tone[c];
+        }
+        drawDots(ctx, hx, hy, ht, pts.length);
       }
-      act.over?.(t, leave);
+      phase.over?.(ctx, t, leave);
     }
 
     // Box, scan line, tag.
@@ -1152,15 +1116,15 @@ export async function createMachine(cv: HTMLCanvasElement, data: MachineData, op
     // Signal tear for a few frames after each hard cut.
     let age = 99;
     for (const c of CUTS) if (t >= c) age = Math.min(age, t - c);
-    if (age < 0.16) {
-      const amt = (1 - age / 0.16) * (wide ? 70 : 30);
+    if (age < TEAR) {
+      const amt = (1 - age / TEAR) * (wide ? 70 : 30);
       for (let i = 0; i < 7; i++) {
         const sy = hash(fr * 31 + i) * H;
         const sh = 6 + hash(fr * 17 + i * 5) * H * 0.09;
         const dx = (hash(fr * 13 + i * 3) - 0.5) * 2 * amt;
         ctx.drawImage(cv, 0, sy * dpr, cv.width, sh * dpr, dx, sy, W, sh);
       }
-      ctx.fillStyle = rgb(TEXT, 0.1 * (1 - age / 0.16));
+      ctx.fillStyle = rgb(TEXT, 0.1 * (1 - age / TEAR));
       ctx.fillRect(0, 0, W, H);
     }
     if (scanPattern) {

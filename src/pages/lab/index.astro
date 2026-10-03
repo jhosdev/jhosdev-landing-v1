@@ -4,7 +4,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
 import TopBar from '../../components/TopBar.astro';
 import BootScene from '../../components/BootScene.astro';
 import { getContent } from '../../data/content';
-import { INTROS, DEFAULT_INTRO, VARIANT } from '../../components/machine/catphase';
+import { INTROS, DEFAULT_INTRO, addedTime } from '../../components/machine/catphase';
 
 const content = getContent('en');
 const label = content.promptUser;
@@ -15,11 +15,10 @@ const experiments = [
   { href: '/lab/tictactoe/', name: 'tictactoe/', note: 'play minimax and watch it think' },
 ];
 const NOTES: Record<(typeof INTROS)[number], string> = {
-  sit: 'it sits, looks back over its shoulder, flicks its tail, blinks',
-  walk: 'it walks in, stops, lowers itself into a sit, looks back with a nod',
-  silhouette: 'outline traced, then filled by the scan line',
-  pounce: 'it stalks the red marker, wiggles, leaps and lands on it',
-  peek: 'ears, eyes that glance both ways, then it pops up, paws on the edge'
+  sit: 'dots of the panel rise into a sitting cat; it looks back over its shoulder, flicks its tail, blinks',
+  walk: 'it materialises mid-stride, walks on, stops, lowers itself into a sit, looks back with a nod',
+  silhouette: 'the panel traces its outline dot by dot, then the scan line fills it in',
+  pounce: 'it materialises crouched, stalks the red marker, wiggles, leaps and lands on it'
 };
 ---
 
@@ -40,7 +39,7 @@ const NOTES: Record<(typeof INTROS)[number], string> = {
       </div>
     </section>
     <section>
-      <p class="prompt">$ ls intro/ <span class="comment"># intro variants, each looping its cat phase; the link replays the home intro with it</span></p>
+      <p class="prompt">$ ls intro/ <span class="comment"># intro variants, each looping its cat phase from the panel of dots, all particles; the link replays the home intro with it</span></p>
       <div class="cats">
         {
           INTROS.map((name) => (
@@ -53,7 +52,7 @@ const NOTES: Record<(typeof INTROS)[number], string> = {
                 </span>
                 <span class="cat-note">{NOTES[name]}</span>
                 <span class="cat-meta">
-                  {VARIANT[name].extra ? `+${VARIANT[name].extra.toFixed(1)}s` : '+0.0s'} to the home intro · <a href={`/?intro=${name}`}>open the intro →</a>
+                  +{addedTime(name).toFixed(1)}s to the home intro · <a href={`/?intro=${name}`}>open the intro →</a>
                 </span>
               </figcaption>
             </figure>
@@ -63,7 +62,7 @@ const NOTES: Record<(typeof INTROS)[number], string> = {
           <canvas data-cat="about" aria-hidden="true" />
           <figcaption>
             <span class="cat-name">about</span>
-            <span class="cat-note">the about section: a sphere of particles resolves into the sitting cat, which idles</span>
+            <span class="cat-note">the about section: a sphere of particles resolves into the sitting cat, which idles as particles</span>
             <span class="cat-meta">not part of the intro · <a href="/#about">open the section →</a></span>
           </figcaption>
         </figure>
@@ -115,10 +114,10 @@ const NOTES: Record<(typeof INTROS)[number], string> = {
 
 <script>
   // Each tile loops its variant's cat phase, drawn by the same code the intro uses (catphase.ts):
-  // from the cat entering to the moment it starts resolving into the handle, a short hold, again, at the home's speed.
-  import { CAT_AT, VARIANT, catPhase, homeSpeed, introName, type CatPhase } from '../../components/machine/catphase';
-  import { buildCat, drawCat, type Cat } from '../../components/machine/cat';
-  import { BG, E, P, rgb } from '../../components/machine/draw';
+  // from the quiet panel of dots to the moment it starts resolving into the handle, a short hold, again, in the home's time.
+  import { VARIANT, along, catCut, catPhase, introName, type CatPhase } from '../../components/machine/catphase';
+  import { buildCat, drawCat, drawDots, type Cat } from '../../components/machine/cat';
+  import { BG, BORDER, E, P, rgb } from '../../components/machine/draw';
 
   const HOLD = 0.7;
   const ABOUT = 10;
@@ -150,7 +149,7 @@ const NOTES: Record<(typeof INTROS)[number], string> = {
     tile.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     const { W, H } = tile;
     if (tile.name === 'about') tile.cat = buildCat(Math.min(W, H) * 0.9);
-    else tile.phase = catPhase(introName(tile.name), { cx: W / 2, cy: H / 2, w: W * 0.86, h: H * 0.74, wide: W / H > 1.4 }, dpr);
+    else tile.phase = catPhase(introName(tile.name), { cx: W / 2, cy: H / 2, w: W * 0.86, h: H * 0.74, wide: W / H > 1.4 });
   }
 
   /** One frame of a tile, `s` seconds into its loop. */
@@ -158,6 +157,9 @@ const NOTES: Record<(typeof INTROS)[number], string> = {
     const { ctx, W, H } = tile;
     ctx.fillStyle = rgb(BG);
     ctx.fillRect(0, 0, W, H);
+    // The Machine's dot grid, as the intro paints it: the cat is made of its dots.
+    ctx.fillStyle = rgb(BORDER, 0.8);
+    for (let y = 14; y < H; y += 28) for (let x = 14; x < W; x += 28) ctx.fillRect(x - 1, y - 1, 2, 2);
     if (tile.cat) {
       const size = tile.cat.size;
       const t = s % ABOUT;
@@ -166,12 +168,14 @@ const NOTES: Record<(typeof INTROS)[number], string> = {
       return;
     }
     if (!tile.phase) return;
-    // At the speed the home plays it.
+    // In the home's time.
     const name = introName(tile.name);
-    const len = (VARIANT[name].morph - CAT_AT) / homeSpeed(name);
-    const t = still ? VARIANT[name].morph : CAT_AT + Math.min(s % (len + HOLD), len) * homeSpeed(name);
+    const cut = catCut(name);
+    const len = cut[cut.length - 1][0];
+    const t = still ? VARIANT[name].morph : along(cut, Math.min(s % (len + HOLD), len));
     tile.phase.under?.(ctx, t, 1);
-    tile.phase.paint(ctx, t);
+    const cat = tile.phase.frame(t);
+    drawDots(ctx, cat.x, cat.y, cat.tone, cat.n);
     tile.phase.over?.(ctx, t, 1);
   }
 
