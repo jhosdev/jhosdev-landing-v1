@@ -1252,7 +1252,7 @@ html.mc-js[data-focus] .mc-excerpt {
 .mc-pet {
   --lp: 0px;
   width: 100%;
-  max-width: 340px;
+  max-width: 440px;
   justify-self: center;
 }
 
@@ -1261,7 +1261,7 @@ html.mc-js[data-focus] .mc-excerpt {
 }
 
 .mc-pet-box {
-  aspect-ratio: 1;
+  aspect-ratio: 4 / 3;
   background: var(--color-bg);
 }
 

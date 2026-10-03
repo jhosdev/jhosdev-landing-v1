@@ -11,7 +11,12 @@ import {
   along, buildStreets, cl, dash, decode, drawStreets, entPos, font, hash, lerp, pad, rgb,
   type RGB, type Streets,
 } from './draw';
-import { buildCat, drawCat } from './cat';
+import { buildLuna, drawLuna } from './cat';
+import { ABOUT, ABOUT_KEYS, ABOUT_LOG, HERO, HERO_KEYS } from './catkeys';
+
+/** Seconds into the about movement when her loop starts (she has resolved, asleep), and the second of it a still frame shows. */
+const LUNA_AT = 2.2;
+const LUNA_STILL = 2;
 
 /* ------------------------------------------------------------------ cues */
 
@@ -278,8 +283,8 @@ function label(ctx: CanvasRenderingContext2D, s: string, x: number, y: number, c
   ctx.restore();
 }
 
-/** How long the cat stays in the hero when it is summoned, in seconds. */
-export const CAT_LEN = 6.4;
+/** How long the cat stays in the hero when it is summoned, in seconds (her timeline, catkeys.ts HERO_KEYS). */
+export const CAT_LEN = HERO;
 
 /** Idle period shared with the intro's map: every idle motion divides it. */
 const LOOP = 12;
@@ -393,10 +398,13 @@ const asset: Painter = (fx, t) => {
   if (local <= 0 || local >= CAT_LEN) return;
   const C = memo(fx, 'cat', () => {
     const size = Math.min(L.pool.w * 0.92, L.pool.h * 0.9, 400);
-    return { cat: buildCat(size), x: px - size / 2, y: py - size / 2, size };
+    return { cat: buildLuna(HERO_KEYS, 0, size, size, 0, HERO), x: px - size / 2, y: py - size / 2, size };
   });
   const out = CAT_LEN - 1.7;
-  drawCat(ctx, C.cat, C.x, C.y, t, P(local, 0, 0.5) * (1 - P(local, CAT_LEN - 0.5, CAT_LEN)), E.inOutCubic(P(local, 0.4, 1.8)) * (1 - P(local, out, CAT_LEN - 0.4)), calm);
+  ctx.save();
+  ctx.translate(C.x, C.y);
+  drawLuna(ctx, C.cat, local, t, P(local, 0, 0.5) * (1 - P(local, CAT_LEN - 0.5, CAT_LEN)), E.inOutCubic(P(local, 0.4, 1.8)) * (1 - P(local, out, CAT_LEN - 0.4)));
+  ctx.restore();
   const a = calm ? 1 : P(local, 1.7, 1.95) * (1 - P(local, out - 0.1, out + 0.15));
   if (a <= 0) return;
   const box = grow({ x: C.x, y: C.y, w: C.size, h: C.size }, 4 + 14 * (1 - E.outExpo(P(local, 1.7, 2.2))));
@@ -530,17 +538,22 @@ const opensource: Painter = (fx, t) => {
   });
 };
 
-/** ABOUT: a second entity in the frame. A sphere of noise is analysed and resolves into the cat, which then idles. */
+/**
+ * ABOUT: a second entity in the frame. A sphere of noise is analysed and resolves into the cat, asleep and grey; a
+ * second pass of the scan classifies her (her coat and her eyes come on behind the line), and then she goes on with her
+ * day (catkeys.ts ABOUT_KEYS, a 20s loop) while the Machine logs what she is doing in the corner of the frame.
+ * `fx.state.luna` (the `?luna=` parameter) freezes the loop at that second.
+ */
 const about: Painter = (fx, t) => {
   const { ctx, W, H, calm } = fx;
-  const L = memo(fx, 'pet', () => {
-    const size = Math.min(W, H) * 0.84;
-    return { cat: buildCat(size), x: (W - size) / 2, y: (H - size) / 2, size };
-  });
+  const L = memo(fx, 'pet', () => ({ cat: buildLuna(ABOUT_KEYS, ABOUT, W, H), log: JSON.parse(fx.host.dataset.log ?? '[]') as string[] }));
   ctx.clearRect(0, 0, W, H);
-  if (!calm && t >= 0.8 && t < 1.8) {
-    // Under analysis: an amber line scans the frame.
-    const sy = (((t - 0.8) % 0.5) / 0.5) * H;
+  const frozen = fx.state.luna;
+  const still = calm || frozen !== undefined;
+  // Two passes of an amber line: the first analyses the noise, the second classifies her.
+  const pass = t >= 0.8 && t < 1.4 ? (t - 0.8) / 0.6 : t >= 1.9 && t < 2.6 ? (t - 1.9) / 0.7 : -1;
+  if (!still && pass >= 0) {
+    const sy = pass * H;
     const wash = ctx.createLinearGradient(0, sy - 36, 0, sy);
     wash.addColorStop(0, rgb(AMBER, 0));
     wash.addColorStop(1, rgb(AMBER, 0.12));
@@ -549,7 +562,16 @@ const about: Painter = (fx, t) => {
     ctx.fillStyle = rgb(AMBER, 0.8);
     ctx.fillRect(0, sy, W, 1);
   }
-  drawCat(ctx, L.cat, L.x, L.y, t, calm ? 1 : P(t, 0.2, 0.8), calm ? 1 : E.inOutCubic(P(t, 0.8, 2.2)), calm);
+  const lt = frozen ?? (calm ? LUNA_STILL : Math.max(0, t - LUNA_AT) % ABOUT);
+  const line = still || t >= 2.6 ? Infinity : t < 1.9 ? -1 : pass * H;
+  drawLuna(ctx, L.cat, lt, t, still ? 1 : P(t, 0.2, 0.8), still ? 1 : E.inOutCubic(P(t, 0.8, 2.2)), line);
+  // The log: what she is doing, re-decoded whenever it changes.
+  if (!L.log.length || (!still && t < 2.6)) return;
+  let k = 0;
+  while (k < ABOUT_LOG.length - 1 && lt >= ABOUT_LOG[k + 1][0]) k++;
+  const [since, entry] = ABOUT_LOG[k];
+  const s = (L.log[entry] ?? '').toUpperCase();
+  text(ctx, still ? s : decode(s, P(lt - since, 0, 0.4), t, entry + 3), 10, H - 10, 10, rgb(MUTED), 'left');
 };
 
 /** One strip of signal: red noise ahead of the decode front, a calm green carrier behind it. */

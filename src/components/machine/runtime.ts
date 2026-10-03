@@ -7,8 +7,9 @@
 //   ?move=0.6         freeze every section's movement at 60% (1 = settled)
 //   ?run=help;proj    run these commands after load (never navigates away)
 //   ?intro            play the intro even if this tab has already seen it
-//   ?intro=walk       ...with that cat (sit, walk, silhouette, pounce); combines with ?seek=
+//   ?intro=walk       ...with that cat (nap, pounce, walk, stretch); combines with ?seek=
 //   ?cat=2.5          the hero's cat, frozen 2.5s after it was summoned (implies ?move=1)
+//   ?luna=14.8        the about section's cat, frozen 14.8s into her loop (implies ?move=1)
 
 import { complete, execute, suggest, type Action, type ShellContext } from '../shell/commands';
 import { P, cl } from './draw';
@@ -54,7 +55,7 @@ function start(root: HTMLElement, data: RuntimeData) {
   const params = new URLSearchParams(location.search);
   const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
   const finePointer = matchMedia('(pointer: fine)').matches;
-  const frozen = params.has('move') ? cl(Number(params.get('move')) || 0) : params.has('cat') ? 1 : null;
+  const frozen = params.has('move') ? cl(Number(params.get('move')) || 0) : params.has('cat') || params.has('luna') ? 1 : null;
   const scripted = params.has('run');
   const still = reduced || frozen !== null;
 
@@ -713,6 +714,8 @@ function start(root: HTMLElement, data: RuntimeData) {
     html.classList.remove('mc-intro-on');
     introOn = false;
     if (landing && ref) go(ref, false);
+    const luna = byId('about')?.mv.fx;
+    if (luna && params.has('luna')) luna.state.luna = Math.max(0, Number(params.get('luna')) || 0);
     for (const sec of secs) {
       sec.el.dataset.played = '';
       sec.phase = 'done';

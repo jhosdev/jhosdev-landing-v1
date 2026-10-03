@@ -7,7 +7,7 @@ import {
   buildStreets, cl, dash as drawDash, decode, drawStreets, entPos as streetPos, font, hash, lerp, mulberry32, pad, rgb, trunc,
   type Ent, type RGB, type Streets,
 } from './draw';
-import { CYAN_TONE, drawDots } from './cat';
+import { CYAN_TONE, drawDots, drawFrame } from './cat';
 import { HIDDEN, LIT } from './catrig';
 import { CUT_RATE, DEFAULT_INTRO, TEAR, VARIANT, catCut, catPhase, type CatPhase, type IntroName } from './catphase';
 import type { SceneCopy } from './copy';
@@ -544,8 +544,7 @@ export async function createMachine(cv: HTMLCanvasElement, data: MachineData, op
     if (phase) {
       phase.under?.(ctx, t, leave);
       if (t < MORPH) {
-        const cat = phase.frame(t);
-        drawDots(ctx, cat.x, cat.y, cat.tone, cat.n);
+        drawFrame(ctx, phase.frame, t);
       } else {
         // Each particle of the handle starts on one of the cat's (all of them used, evenly).
         const V = still.seen.length;

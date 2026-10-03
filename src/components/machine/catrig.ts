@@ -15,7 +15,7 @@
 //   - shoulders and hips rise over each planted leg and dip between steps, in
 //     opposite phase, so the back rocks; the head stays level; the tail lags.
 
-import { E, P, cl, lerp } from './draw';
+import { E, P, cl, lerp, mulberry32 } from './draw';
 
 const UPPER = 8.5;
 const FORE = 13.3;
@@ -26,7 +26,9 @@ const THIGH = 9;
 const SHANK = 10;
 const META = 7;
 const HPAW = 2.7;
-const TAIL = 7;
+export const TAIL = 7;
+/** The head's size against its outlines. */
+const HEAD_K = 1.2;
 const TAIL_SEG = 5.6;
 /** Height of the spine at the hips and shoulders when it stands. */
 const BACK = 26;
@@ -34,7 +36,7 @@ const BACK = 26;
 const HALF = 12.5;
 
 /** Legs, in the order the feet are stored: far hind, far fore, near hind, near fore. */
-const HIND = [true, false, true, false];
+export const HIND = [true, false, true, false];
 
 export const STRIDE = 30;
 export const DUTY = 0.62;
@@ -42,8 +44,8 @@ export const DUTY = 0.62;
 const PHASE = [0.5, 0.75, 0, 0.25];
 /** Where a foot is under the body at mid-stance. */
 const NEUTRAL = [-12.5, 11.5, -12.5, 11.5];
-const TAIL_UP = [2.75, 2.5, 2.25, 2.05, 1.95, 2.0, 2.2];
-const TAIL_SAT = [2.55, 2.2, 1.95, 1.8, 1.55, 1.05, 0.35];
+export const TAIL_UP = [2.75, 2.5, 2.25, 2.05, 1.95, 2.0, 2.2];
+export const TAIL_SAT = [2.55, 2.2, 1.95, 1.8, 1.55, 1.05, 0.35];
 const TAIL_LOW = [3.3, 3.2, 3.0, 2.7, 2.35, 2.0, 1.7];
 
 export interface Pose {
@@ -66,9 +68,24 @@ export interface Pose {
   /** Ear twitches (radians, tip back about the base): far ear, near ear. */
   earA: number;
   earB: number;
+  /** How open the eyes are (0 shut, 1 wide), the head's tilt in the picture plane (radians), how wide the mouth is (a yawn, 0..1). */
+  open: number;
+  roll: number;
+  mouth: number;
+  /** 1: the tail is wrapped toward the camera, so it lies over the body and the legs instead of behind them. */
+  tailFront: number;
 }
 
-export const newPose = (): Pose => ({ hx: 0, hy: 0, sx: 0, sy: 0, bend: 0, feet: new Float32Array(16), headX: 0, headY: 0, headA: 0, yaw: 1, tail: new Float32Array(TAIL), earA: 0, earB: 0 });
+export const newPose = (): Pose => ({ hx: 0, hy: 0, sx: 0, sy: 0, bend: 0, feet: new Float32Array(16), headX: 0, headY: 0, headA: 0, yaw: 1, tail: new Float32Array(TAIL), earA: 0, earB: 0, open: 1, roll: 0, mouth: 0, tailFront: 0 });
+/** Back to a plain face: eyes open, head upright, mouth shut, tail behind. Every pose starts here. */
+const rest = (p: Pose) => {
+  p.open = 1;
+  p.roll = 0;
+  p.mouth = 0;
+  p.tailFront = 0;
+  p.earA = 0;
+  p.earB = 0;
+};
 
 /** What a part of the silhouette is: how it joins the rest. */
 export const BODY_PART = 0;
@@ -84,12 +101,17 @@ export interface Shape {
   parts: number[];
   /** Closed outlines (x, y, ...): the skull and the ears. */
   polys: number[][];
-  /** Eyes (x, y, rx, ry, tilt), flat. */
+  /** Eyes (x, y, rx, ry, tilt, side of the face: -1 or 1), flat. */
   eyes: number[];
   /** Where the head is turned (the pose's yaw): 1 in profile, 0 at the camera, -1 in profile looking back. */
   yaw: number;
+  /** The head's frame, to find the face on it: centre (x, y), cos and sin of its turn, size, mirror (1 or -1), how far in profile (0..1), mouth. */
+  head: number[];
+  /** The pose's eyes, and whether the tail lies in front. */
+  open: number;
+  tailFront: number;
 }
-export const newShape = (): Shape => ({ discs: [], parts: [], polys: [], eyes: [], yaw: 1 });
+export const newShape = (): Shape => ({ discs: [], parts: [], polys: [], eyes: [], yaw: 1, head: [0, 0, 1, 0, 1, 1, 1, 0], open: 1, tailFront: 0 });
 const clear = (s: Shape) => {
   s.discs.length = 0;
   s.parts.length = 0;
@@ -175,6 +197,8 @@ function contour(pts: number[], per = 6): number[] {
 const SKULL_SIDE = [0.6, 4.9, 3.0, 4.05, 4.7, 2.45, 6.3, 0.65, 6.4, -0.45, 5.6, -1.55, 4.3, -2.55, 2.1, -3.45, -0.4, -4.1, -2.6, -3.95, -4.2, -2.9, -5.0, -1.2, -5.1, 0.8, -4.4, 2.7, -3.0, 4.0, -1.2, 4.8];
 // From the front: a domed crown, widest at the cheeks under the eyes, a narrower chin.
 const SKULL_FRONT = [0, 4.6, 2.6, 4.25, 4.4, 2.9, 5.3, 1.0, 5.9, -1.0, 5.5, -2.6, 3.7, -3.75, 1.5, -4.25, 0, -4.35, -1.5, -4.25, -3.7, -3.75, -5.5, -2.6, -5.9, -1.0, -5.3, 1.0, -4.4, 2.9, -2.6, 4.25];
+/** How far each point of the front outline drops when the mouth opens wide: the chin and the jaw beside it. */
+const YAWN_DROP = [0, 0, 0, 0, 0, 0, 0.5, 1.4, 1.75, 1.4, 0.5, 0, 0, 0, 0, 0];
 // Ears: outer base, tip, inner base. In profile the far one shows just ahead of the near one.
 const EARS_SIDE = [
   [-4.0, 2.2, -2.9, 8.2, -0.1, 4.5],
@@ -190,16 +214,30 @@ const EARS_FRONT = [
  * `yaw` turns it (1 profile, 0 at the camera, -1 profile the other way), `k` is its size, `roll` tilts it
  * (radians, in the picture plane) and `earA` / `earB` turn each ear's tip back about its base (a twitch).
  */
-export function head(s: Shape, x: number, y: number, pitch: number, yaw: number, k = 1, roll = 0, earA = 0, earB = 0) {
+export function head(s: Shape, x: number, y: number, pitch: number, yaw: number, k = 1, roll = 0, earA = 0, earB = 0, mouth = 0) {
   const side = Math.abs(yaw);
   s.yaw = yaw;
   const flip = yaw < 0 ? -1 : 1;
   // The pitch fades as the head comes round, so it never jumps when the nose crosses the middle.
   const c = Math.cos(pitch * yaw + roll);
   const sn = Math.sin(pitch * yaw + roll);
+  s.head = [x, y, c, sn, k, flip, side, mouth];
   const put = (out: number[], lx: number, ly: number) => out.push(x + (lx * flip * c - ly * sn) * k, y + (lx * flip * sn + ly * c) * k);
   const skull: number[] = [];
-  for (let i = 0; i < SKULL_SIDE.length; i += 2) put(skull, lerp(SKULL_FRONT[i], SKULL_SIDE[i], side), lerp(SKULL_FRONT[i + 1], SKULL_SIDE[i + 1], side));
+  // A yawn: from the front the chin drops; in profile the jaw swings down about its hinge.
+  const jc = Math.cos(-0.55 * mouth);
+  const js = Math.sin(-0.55 * mouth);
+  for (let i = 0; i < SKULL_SIDE.length; i += 2) {
+    let sx = SKULL_SIDE[i];
+    let sy = SKULL_SIDE[i + 1];
+    if (mouth && i >= 10 && i <= 16) {
+      const hx = sx + 0.9;
+      const hy = sy + 1.5;
+      sx = -0.9 + hx * jc - hy * js;
+      sy = -1.5 + hx * js + hy * jc;
+    }
+    put(skull, lerp(SKULL_FRONT[i], sx, side), lerp(SKULL_FRONT[i + 1] - mouth * YAWN_DROP[i / 2], sy, side));
+  }
   s.polys.push(contour(skull));
   for (let e = 0; e < 2; e++) {
     const q = EARS_FRONT[e].map((v, i) => lerp(v, EARS_SIDE[e][i], side));
@@ -241,7 +279,7 @@ export function head(s: Shape, x: number, y: number, pitch: number, yaw: number,
     const ex = lat * 2.35 * depth * flip + 3.1 * side;
     const o: number[] = [];
     put(o, ex, lerp(0.35, 1.05, side));
-    s.eyes.push(o[0], o[1], k * seen * lerp(1.2, 0.95, side), lerp(0.85, 0.5, side) * k, pitch * yaw + roll + flip * lerp(lat * -0.25, 0.3, side));
+    s.eyes.push(o[0], o[1], k * seen * lerp(1.4, 1.0, side), lerp(1.0, 0.62, side) * k, pitch * yaw + roll + flip * lerp(lat * -0.2, 0.3, side), lat);
   }
 }
 
@@ -357,7 +395,9 @@ export function skin(p: Pose, s: Shape) {
   // Nothing goes through the floor: what would is flattened against it.
   for (let i = 0; i < s.discs.length; i += 3) s.discs[i + 1] = Math.max(s.discs[i + 1], s.discs[i + 2]);
 
-  head(s, p.headX, p.headY, p.headA, p.yaw, 1.2, 0, p.earA, p.earB);
+  head(s, p.headX, p.headY, p.headA, p.yaw, HEAD_K, p.roll, p.earA, p.earB, p.mouth);
+  s.open = p.open;
+  s.tailFront = p.tailFront;
 }
 
 /* ------------------------------------------------------------------- poses */
@@ -394,10 +434,11 @@ export function walkFoot(s: number, leg: number, lift: number, feet: Float32Arra
 }
 
 /** Sitting: where the spine, the head and the feet (far hind, far fore, near hind, near fore) are. x = 0 is where it sits. */
-const SIT = { hx: -11, hy: 6.5, sx: 5, sy: 26.5, bend: 3.2, headX: 7.5, headY: 39, feet: [1.4, 13.4, 0, 10.4] };
+export const SIT = { hx: -11, hy: 6.5, sx: 5, sy: 26.5, bend: 3.2, headX: 7.5, headY: 39, feet: [1.4, 13.4, 0, 10.4] };
 
 /** The cat sitting still. `swing` bends the tail (radians at its tip), `yaw` turns the head. */
 export function sitPose(p: Pose, swing = 0, yaw = -1) {
+  rest(p);
   p.hx = SIT.hx;
   p.hy = SIT.hy;
   p.sx = SIT.sx;
@@ -431,6 +472,7 @@ const SIT_STEP = [0, 0.5, 0.14, 0.26];
  * shuffles its feet under itself and sits, then turns its head to look back. x = 0 is where it sits.
  */
 export function walkPose(p: Pose, t: number) {
+  rest(p);
   // Steady pace, then a smooth stop.
   const u = P(t, 0, WALK.stride);
   const u0 = 0.68;
@@ -523,6 +565,7 @@ const TAIL_LANDED = [2.95, 2.75, 2.5, 2.25, 2.05, 1.95, 2.0];
  * x = 0 is the middle of the frame; `F` is where it starts (a narrow frame starts it closer).
  */
 export function pouncePose(p: Pose, t: number, dotX: number, dotY: number, F: number = POUNCE.from) {
+  rest(p);
   const { crouch, wiggleAt, coilAt, leapAt: a, land, squash, settled, to: L } = POUNCE;
   const air = land - a;
   const u = P(t, a, land);
@@ -600,9 +643,9 @@ const BLEND = [0, 2.6, 1.6, 1.8];
 const BIG = 1e3;
 
 let grids: Float32Array[] = [];
-/** Grids: body, the whole shape, far legs, the part being added, near legs. */
+/** Grids: body, the whole shape, far legs, the part being added, near legs, tail. */
 function grid(n: number) {
-  if (!grids.length || grids[0].length < n) grids = Array.from({ length: 5 }, () => new Float32Array(n));
+  if (!grids.length || grids[0].length < n) grids = Array.from({ length: 6 }, () => new Float32Array(n));
   return grids;
 }
 
@@ -620,10 +663,11 @@ export interface Field {
   g: number;
   /** One value per node, row by row from y0 up. */
   d: Float32Array;
-  /** The same grid for the body alone, the near legs alone and the far legs alone (exact only near them). */
+  /** The same grid for the body alone, the near legs alone, the far legs alone and the tail alone (exact only near them). */
   body: Float32Array;
   near: Float32Array;
   far: Float32Array;
+  tail: Float32Array;
 }
 
 /** Samples the silhouette's field (discs only; the head's outlines are not in it). */
@@ -639,7 +683,10 @@ export function field(s: Shape, g: number): Field {
     y0 = Math.min(y0, d[i + 1] - d[i + 2]);
     y1 = Math.max(y1, d[i + 1] + d[i + 2]);
   }
-  if (!(x1 > x0)) return { nx: 0, ny: 0, x0: 0, y0: 0, g, d: new Float32Array(0), body: new Float32Array(0), near: new Float32Array(0), far: new Float32Array(0) };
+  if (!(x1 > x0)) {
+    const none = new Float32Array(0);
+    return { nx: 0, ny: 0, x0: 0, y0: 0, g, d: none, body: none, near: none, far: none, tail: none };
+  }
   // Never more than about 200k nodes, however large it is drawn.
   g = Math.max(g, Math.sqrt(((x1 - x0 + 8) * (y1 - y0 + 8)) / 2e5));
   x0 -= 4;
@@ -647,10 +694,11 @@ export function field(s: Shape, g: number): Field {
   const nx = Math.ceil((x1 + 4 - x0) / g) + 1;
   const ny = Math.ceil((y1 + 4 - y0) / g) + 1;
   const n = nx * ny;
-  const [B, N, F, Q, L] = grid(n);
+  const [B, N, F, Q, L, T] = grid(n);
   B.fill(BIG, 0, n);
   F.fill(BIG, 0, n);
   L.fill(BIG, 0, n);
+  T.fill(BIG, 0, n);
   const box = [0, 0, 0, 0];
   /** Hard union of discs [a, b) into `to`, exact to `m` outside them; returns the node box it touched. */
   const discs = (to: Float32Array, a: number, b: number, m: number) => {
@@ -730,6 +778,7 @@ export function field(s: Shape, g: number): Field {
           continue;
         }
         if (kind === NEAR_LEG && v < L[q]) L[q] = v;
+        if (kind === TAIL_PART) T[q] = v;
         const u = smin(B[q], v, k);
         if (u < N[q]) N[q] = u;
       }
@@ -742,31 +791,46 @@ export function field(s: Shape, g: number): Field {
     const u = smin(B[q], F[q], k);
     if (u < N[q]) N[q] = u;
   }
-  return { nx, ny, x0, y0, g, d: N, body: B, near: L, far: F };
+  return { nx, ny, x0, y0, g, d: N, body: B, near: L, far: F, tail: T };
 }
 
 /* --------------------------------------------------------------- particles */
 
-// The cat is drawn as particles, and each particle is tied to one place on the body, given in the coordinates of
-// the part it belongs to, so frame after frame it follows that place and the moving cat does not boil:
-//   - a leg, the body, the tail (a sweep of discs): rows run along the part at fixed distances from its middle line
-//     (fixed in rig units, so a thigh that thickens gains a row at its edge instead of spreading the others), each
-//     particle at a fixed fraction of the part's length; two rim rows run along its outline, spaced by length along
-//     it, and each round end is a fan of half rings;
-//   - the skull and the ears (closed outlines): rings at fixed depths inside the outline, by fraction of its length.
-// A part in front hides the particles of the parts behind it (the body hides the legs and the tail, the near legs
-// hide the far ones and the tail, the skull hides the body, the near ear the far one); the rim rows are then pulled
-// onto the field's outline, so the soft joins keep their shape. The eyes are a gap.
+// The cat is drawn as a cloud of particles. They are scattered once, at rest, by chance but evenly (dart throwing: a
+// new one is kept only if no other is too close, so they never clump), more of them toward the outline of each part
+// than inside it, and each keeps its place in the coordinates of its part, so frame after frame it follows that place
+// and the moving cat never boils:
+//   - a leg, the body, the tail (a sweep of discs): how far along the part's middle line, and how far across it as a
+//     fraction of its half width there (a few strays sit just outside, dim, so the edge is never a drawn line);
+//   - the skull and the ears (closed outlines): an angle about the middle and a fraction of the way to the outline;
+//     the skull's are laid out on the face seen from the front, so the face keeps its weave as the head turns;
+//   - the eyes: a ring of dots on each, which closes into the curve of a shut eye.
+// Each also has a size and a brightness, from skewed draws: mostly small and dim, a few large and bright. A part in
+// front hides the particles of the parts behind it (the body hides the legs and the tail, the near legs hide the far
+// ones and the tail, the skull hides the body, the near ear the far one); where a near leg crosses the body its
+// outline shows as brighter dots. The markings are a tabby's, as tones: the coat's are fixed to each particle, the
+// face's are found every frame from where the eyes, the nose and the mouth are.
 
-const ROW = 0;
-const RIM = 1;
-const CAP0 = 2;
-const CAP1 = 3;
-const RING = 4;
-/** Tones are steps of the Machine's grey ramp, 5 the brightest (cat.ts draws them); HIDDEN is not drawn. */
+const SWEPT = 0;
+const POLAR = 1;
+const EYE_DOT = 2;
+/** Tones 0 to 6 are the Machine's grey ramp (5 the brightest) and the asset's cyan; cat.ts draws them. HIDDEN is not drawn. */
 export const HIDDEN = 255;
 export const LIT = 5;
-const DIM = 4;
+// The coat: a tabby in a few warm steps (the darkest are her stripes), cream for the muzzle, chest and belly, and the eyes.
+export const DEEP = 7;
+export const STRIPE = 8;
+export const SHADE = 9;
+export const COAT = 10;
+export const GINGER = 11;
+export const CREAM_DIM = 12;
+export const CREAM = 13;
+export const EYE = 14;
+export const TONE_COUNT = 15;
+/** One step back, for what is further away (the far legs, the far ear). */
+export const DIMMER = Uint8Array.of(0, 0, 1, 2, 3, 4, 6, DEEP, DEEP, SHADE, SHADE, COAT, SHADE, CREAM_DIM, EYE);
+/** What the Machine sees before it has classified her: brightness only, on its grey ramp, and no colour in her eyes. */
+export const GREY = Uint8Array.of(0, 1, 2, 3, 4, 5, 6, 1, 2, 3, 4, 5, 4, 5, 3);
 /** The swept parts come first, in `skin`'s order (far hind, far fore, near hind, near fore, body, tail); then the skull and the two ears. */
 const BODY_I = 4;
 const TAIL_I = 5;
@@ -774,42 +838,65 @@ const SKULL = 6;
 const EAR_NEAR = 7;
 const EAR_FAR = 8;
 
+/** A look: how many particles, where they gather, how big and how bright they are. */
+export interface Style {
+  /** Particles for a cat drawn at 6 px per rig unit; a smaller cat gets fewer (by its size to the power 1.5). */
+  count: number;
+  /** How much denser the band along the outline is than the inside, and how deep it reaches (a fraction of the way in). */
+  edge: number;
+  band: number;
+  /** Share of strays: a little outside the outline, dim. */
+  stray: number;
+  /** Dot sizes (px at 6 px per rig unit): smallest, largest, and how strongly they lean to the small end. */
+  size: readonly [number, number, number];
+  /** Share of dots at full brightness and at the middle step; the rest are dim. */
+  bright: number;
+  mid: number;
+  /** How evenly they are spread: 1 keeps them about as far apart as their density allows (blue noise), 0 is pure chance. */
+  even: number;
+  /** Seconds a streak reaches back behind a moving particle (0: none). */
+  trail: number;
+}
+
 export interface Swarm {
   n: number;
-  /** What each particle is (row, rim, cap at the start or the end, ring) and which part it belongs to. */
+  /** Swept part, polar (skull, ears) or eye dot; which part it belongs to. */
   kind: Uint8Array;
   part: Uint8Array;
-  /** Where on its part: a fraction along it (row, rim), across its round end (cap), around it (ring)... */
+  /** Swept: a fraction along; polar: an angle in the head's frame; eye dot: an angle around the eye. */
   a: Float32Array;
-  /** ...and across: offset from the middle line (row), side (rim, -1 or 1), depth inside the outline (cap, ring; -1 is the very middle). */
+  /** Swept: across, a fraction of the half width (past 1: a stray); polar: a fraction of the way to the outline; eye dot: which eye (-1, 1). */
   b: Float32Array;
-  /** 1 on the outline, 0 inside: the outline is drawn first when the cat materialises. */
+  /** 1 near the outline: the outline is drawn first when the cat materialises. */
   edge: Uint8Array;
-  /** Per swept part, how many rows each side of its middle line. */
-  rows: number[];
-  /** Spacing and half a dot, rig units. */
+  /** Its markings on a leg, the body or the tail (a tone); the head's are found every frame. */
+  coat: Uint8Array;
+  /** Its dot (px) and its brightness step (0 full, 1 middle, 2 dim). */
+  size: Float32Array;
+  level: Uint8Array;
+  /** Rig units: the mean spacing it was laid out with, and half a dot. */
   d: number;
   inset: number;
-  /** This frame: where each particle is (px) and its tone. */
+  /** This frame: where each particle is (px), its tone and its brightness step. */
   x: Float32Array;
   y: Float32Array;
   tone: Uint8Array;
+  lit: Uint8Array;
 }
 
-// Per frame, per disc: the length along its part to it, its normal, and the length along each rim to it.
+// Per frame, per disc: the length along its part to it, its normal, and how the normal turns along it (a bend).
 let CUM = new Float32Array(0);
 let NX = new Float32Array(0);
 let NY = new Float32Array(0);
-let S0 = new Float32Array(0);
-let S1 = new Float32Array(0);
+let KAP = new Float32Array(0);
 const PF = [0, 0, 0, 0, 0, 0];
 const PE = [0, 0, 0, 0, 0, 0];
 
-/** The six swept parts as chains: lengths and normals, for this shape. */
-function chains(s: Shape, inset: number) {
+/** The six swept parts as chains: lengths, normals and bends, for this shape. */
+function chains(s: Shape) {
   const D = s.discs;
   const m = D.length / 3;
-  if (CUM.length < m) [CUM, NX, NY, S0, S1] = Array.from({ length: 5 }, () => new Float32Array(m + 512));
+  if (CUM.length < m) [CUM, NX, NY, KAP] = Array.from({ length: 4 }, () => new Float32Array(m + 512));
   let from = 0;
   for (let p = 0; p < 6; p++) {
     const end = s.parts[p * 2] / 3;
@@ -824,52 +911,17 @@ function chains(s: Shape, inset: number) {
       NX[i] = -ty / l;
       NY[i] = tx / l;
     }
-    CUM[from] = S0[from] = S1[from] = 0;
+    CUM[from] = 0;
+    KAP[from] = 0;
     for (let i = from + 1; i < end; i++) {
       const a = (i - 1) * 3;
       const b = i * 3;
-      CUM[i] = CUM[i - 1] + Math.hypot(D[b] - D[a], D[b + 1] - D[a + 1]);
-      // Length along each rim, counting mostly the way forward: on the inside of a tight bend the rim would loop back
-      // on itself, so there it is crossed slowly instead (always some way forward, so a place on it never jumps).
-      const ra = D[a + 2] - inset;
-      const rb = D[b + 2] - inset;
-      const tx = NY[i];
-      const ty = -NX[i];
-      const least = 0.2 * (CUM[i] - CUM[i - 1]);
-      S0[i] = S0[i - 1] + Math.max(least, (D[b] - NX[i] * rb - D[a] + NX[i - 1] * ra) * tx + (D[b + 1] - NY[i] * rb - D[a + 1] + NY[i - 1] * ra) * ty);
-      S1[i] = S1[i - 1] + Math.max(least, (D[b] + NX[i] * rb - D[a] - NX[i - 1] * ra) * tx + (D[b + 1] + NY[i] * rb - D[a + 1] - NY[i - 1] * ra) * ty);
+      const ds = Math.hypot(D[b] - D[a], D[b + 1] - D[a + 1]);
+      CUM[i] = CUM[i - 1] + ds;
+      // Along the tangent, how fast the normal turns: a point off the middle line by `off` travels (1 + KAP * off) as fast.
+      KAP[i] = ds > 1e-6 ? ((NX[i] - NX[i - 1]) * NY[i] - (NY[i] - NY[i - 1]) * NX[i]) / ds : 0;
     }
     from = end;
-  }
-}
-
-// Per frame, per row of each swept part (a line at a fixed distance from its middle line), the length along it to
-// each disc: the rows of part p start at ROFF[p], one after the other, each as long as the part has discs.
-let ROWS = new Float32Array(0);
-const ROFF = [0, 0, 0, 0, 0, 0];
-/** Below this, a row is bunching up on the inside of a bend (it would fold over itself), and its particles there are left out. */
-const FOLD = 0.35;
-
-function rowLengths(s: Shape, rows: number[], d: number) {
-  const D = s.discs;
-  let total = 0;
-  for (let p = 0; p < 6; p++) total += (2 * rows[p] + 1) * (PE[p] - PF[p]);
-  if (ROWS.length < total) ROWS = new Float32Array(total + 4096);
-  let o = 0;
-  for (let p = 0; p < 6; p++) {
-    ROFF[p] = o;
-    const from = PF[p];
-    const end = PE[p];
-    for (let k = -rows[p]; k <= rows[p]; k++, o += end - from) {
-      const b = k * d;
-      ROWS[o] = 0;
-      for (let i = from + 1; i < end; i++) {
-        const dx = D[i * 3] - D[i * 3 - 3] + (NX[i] - NX[i - 1]) * b;
-        const dy = D[i * 3 + 1] - D[i * 3 - 2] + (NY[i] - NY[i - 1]) * b;
-        // Like the rims: mostly the way forward, and always some, so a place on the row never jumps.
-        ROWS[o + i - from] = ROWS[o + i - from - 1] + Math.max(0.2 * (CUM[i] - CUM[i - 1]), dx * NY[i] - dy * NX[i]);
-      }
-    }
   }
 }
 
@@ -890,12 +942,11 @@ function seek(c: Float32Array, from: number, end: number, v: number) {
   return lo;
 }
 
-// Per frame, per outline (skull, near ear, far ear): its centre, the length around it to each vertex, and how far
-// it reaches from the centre in each direction (to test whether a point is inside it).
+// Per frame, per outline (skull, near ear, far ear; slot 3 is the skull seen from the front): its centre, the length
+// around it to each vertex, and how far it reaches from the centre in each direction.
 const BINS = 64;
-const CEN = [0, 0, 0, 0, 0, 0];
-const RAD = [new Float32Array(BINS), new Float32Array(BINS), new Float32Array(BINS)];
-const PER = [new Float32Array(0), new Float32Array(0), new Float32Array(0)];
+const CEN = [0, 0, 0, 0, 0, 0, 0, 0];
+const RAD = [new Float32Array(BINS), new Float32Array(BINS), new Float32Array(BINS), new Float32Array(BINS)];
 
 function outline(q: number[], j: number) {
   const n = q.length / 2;
@@ -909,17 +960,13 @@ function outline(q: number[], j: number) {
   cy /= n;
   CEN[j * 2] = cx;
   CEN[j * 2 + 1] = cy;
-  if (PER[j].length < n + 1) PER[j] = new Float32Array(n + 64);
-  const per = PER[j];
   const R = RAD[j];
   R.fill(0);
-  per[0] = 0;
   for (let i = 0; i < n; i++) {
     const ax = q[i * 2];
     const ay = q[i * 2 + 1];
     const bx = q[((i + 1) % n) * 2];
     const by = q[((i + 1) % n) * 2 + 1];
-    per[i + 1] = per[i] + Math.hypot(bx - ax, by - ay);
     for (let u = 0; u < 1; u += 0.25) {
       const x = lerp(ax, bx, u) - cx;
       const y = lerp(ay, by, u) - cy;
@@ -930,14 +977,19 @@ function outline(q: number[], j: number) {
   for (let i = 0; i < BINS; i++) if (!R[i]) R[i] = Math.max(R[(i + 1) % BINS], R[(i + BINS - 1) % BINS]);
 }
 
+/** How far outline j reaches from its centre at angle `ang`. */
+function reach(j: number, ang: number) {
+  const f = ((ang + Math.PI) / (2 * Math.PI)) * BINS - 0.5;
+  const i = Math.floor(f);
+  const R = RAD[j];
+  return lerp(R[((i % BINS) + BINS) % BINS], R[(((i + 1) % BINS) + BINS) % BINS], f - i);
+}
+
 /** Whether (x, y) is inside outline j, grown by m (shrunk if m < 0). */
 function within(j: number, x: number, y: number, m: number) {
   const dx = x - CEN[j * 2];
   const dy = y - CEN[j * 2 + 1];
-  const f = ((Math.atan2(dy, dx) + Math.PI) / (2 * Math.PI)) * BINS - 0.5;
-  const i = Math.floor(f);
-  const R = RAD[j];
-  return Math.hypot(dx, dy) < lerp(R[(i + BINS) % BINS], R[(i + 1) % BINS], f - i) + m;
+  return Math.hypot(dx, dy) < reach(j, Math.atan2(dy, dx)) + m;
 }
 
 /** The field at (x, y), between its nodes. Far from the shape it is large. */
@@ -953,87 +1005,175 @@ function sample(f: Field, g: Float32Array, x: number, y: number) {
   return (g[q] * (1 - fu) + g[q + 1] * fu) * (1 - fv) + (g[q + f.nx] * (1 - fu) + g[q + f.nx + 1] * fu) * fv;
 }
 
+const frac = (x: number) => x - Math.floor(x);
+
 /**
- * The particles for a cat that will take the given shapes (the first one sets how many go along each part; all of them
- * how wide each part gets), `d` apart, each dot `2 * inset` wide (rig units).
+ * A tabby's markings on a leg, the body or the tail, at `s` along it (0 where it starts: the hip or shoulder, the rump,
+ * the root) and `n` across it (-1 to 1; the back, and the front of a leg, are 1). Mackerel stripes run down the flanks
+ * from a dark line along the spine and fade before the belly; a cream bib; the legs are barred, the tail ringed, its tip dark.
  */
-export function swarm(shapes: Shape[], d: number, inset: number): Swarm {
+function coatOf(p: number, s: number, n: number) {
+  if (p === BODY_I) {
+    // The body's sweep runs rump (0), shoulders (about 0.6), neck, up to the skull.
+    if (s > 0.6 && n < 0.05) return CREAM;
+    if (n < -0.55) return GINGER;
+    if (s < 0.64 && n > 0.6 && n < 0.9) return STRIPE;
+    if (s > 0.06 && s < 0.6 && n > -0.38 && frac(s * 11 + 0.35 * n * n) < 0.34) return STRIPE;
+    if (s >= 0.6 && n > 0.05 && frac(s * 15) < 0.3) return STRIPE;
+    return n < -0.15 ? GINGER : COAT;
+  }
+  if (p === TAIL_I) {
+    if (s > 0.88) return STRIPE;
+    return s > 0.1 && frac(s * 7.5) < 0.42 ? STRIPE : COAT;
+  }
+  if (s > 0.84) return GINGER;
+  return s > 0.2 && frac(s * 6.5 + 0.25) < 0.34 ? STRIPE : COAT;
+}
+
+/** A polygon's area. */
+function area(q: number[]) {
+  let a = 0;
+  for (let i = 0, n = q.length / 2; i < n; i++) {
+    const j = (i + 1) % n;
+    a += q[i * 2] * q[j * 2 + 1] - q[j * 2] * q[i * 2 + 1];
+  }
+  return Math.abs(a) / 2;
+}
+
+/** Dots per eye, on its ring. */
+const EYE_DOTS = 9;
+
+/**
+ * The particles for a cat in the look `style`, drawn at `sc` px per rig unit, that will take the given shapes (the
+ * first one, at rest, is where they are laid out). `inset` is half a dot (rig units). Always the same for the same
+ * arguments: the chance is seeded.
+ */
+export function swarm(shapes: Shape[], style: Style, sc: number, inset = 1 / sc, seed = 11): Swarm {
+  const s = shapes[0];
+  const D = s.discs;
+  const rnd = mulberry32(seed);
   const K: number[] = [];
   const Pt: number[] = [];
   const A: number[] = [];
   const Bv: number[] = [];
   const Ed: number[] = [];
-  const add = (kind: number, part: number, a: number, b: number, edge: number) => {
+  const Co: number[] = [];
+  const Sz: number[] = [];
+  const Lv: number[] = [];
+  const total = Math.max(220, Math.round(style.count * Math.pow(sc / 6, 1.5)));
+  const grow = cl(Math.sqrt(sc / 6), 0.65, 1.15);
+  const [s0, s1, skew] = style.size;
+  const add = (kind: number, part: number, a: number, b: number, edge: number, stray: boolean) => {
+    const size = s0 + (s1 - s0) * Math.pow(rnd(), skew);
+    const r = rnd();
+    // The big ones are the bright ones; strays are dim.
+    const level = stray ? 2 : size > s0 + 0.62 * (s1 - s0) || r < style.bright ? 0 : r < style.bright + style.mid ? 1 : 2;
     K.push(kind);
     Pt.push(part);
     A.push(a);
     Bv.push(b);
     Ed.push(edge);
+    Sz.push(size * grow);
+    Lv.push(level);
+    Co.push(0);
   };
-  const s = shapes[0];
-  const D = s.discs;
-  // How many rows each side of the middle line each part has room for, in the widest it gets.
-  const rows = [0, 0, 0, 0, 0, 0];
-  for (const sh of shapes) {
-    chains(sh, inset);
-    for (let p = 0; p < 6; p++) {
-      for (let i = PF[p]; i < PE[p]; i++) rows[p] = Math.max(rows[p], Math.floor((sh.discs[i * 3 + 2] - inset - 0.7 * d) / d));
-    }
+  chains(s);
+  const front = newShape();
+  head(front, 0, 0, 0, 0, HEAD_K);
+  outline(front.polys[0], 3);
+  for (let j = 1; j < 3; j++) outline(s.polys[j], j);
+  // Each part gets particles in proportion to its area (the head more: the face carries the most).
+  // Each part gets particles for its area and for its outline (so a thin leg is still drawn), the head more: the face carries the most.
+  const areas: number[] = [];
+  const shares: number[] = [];
+  for (let p = 0; p < 6; p++) {
+    let a = 0;
+    for (let i = PF[p] + 1; i < PE[p]; i++) a += (D[i * 3 + 2] + D[i * 3 - 1]) * (CUM[i] - CUM[i - 1]);
+    areas.push(a);
+    shares.push(a + 2.2 * CUM[PE[p] - 1]);
   }
-  // Along each row a particle every d of its length; kept where the part is wide enough for that row in some shape.
-  const keep: Uint8Array[][] = [];
-  shapes.forEach((sh, si) => {
-    chains(sh, inset);
-    rowLengths(sh, rows, d);
-    for (let p = 0; p < 6; p++) {
-      const from = PF[p];
-      const len = PE[p] - from;
-      keep[p] ??= [];
-      for (let k = -rows[p]; k <= rows[p]; k++) {
-        const o = ROFF[p] + (k + rows[p]) * len;
-        const L = ROWS[o + len - 1];
-        if (!si) keep[p][k + rows[p]] = new Uint8Array(Math.max(1, Math.round(L / d)) + 1);
-        const row = keep[p][k + rows[p]];
-        const n = row.length - 1;
-        for (let j = 0; j <= n; j++) {
-          const q = seek(ROWS, o, o + len, (j / n) * L) - o + from;
-          const r = lerp(sh.discs[q * 3 + 2], sh.discs[Math.min(q + 1, PE[p] - 1) * 3 + 2], segU);
-          if (Math.abs(k * d) <= r - inset - 0.7 * d) row[j] = 1;
+  areas.push(area(front.polys[0]), area(s.polys[1]), area(s.polys[2]));
+  shares.push(1.5 * areas[6] + 12, areas[7] + 6, areas[8] + 6);
+  const sum = areas.reduce((x, y) => x + y, 0);
+  const shareSum = shares.reduce((x, y) => x + y, 0);
+  const density = (k: number) => 1 + (style.edge - 1) * cl((k - (1 - style.band)) / style.band);
+  const mean = 1 + (style.edge - 1) * style.band * 0.5;
+  for (let p = 0; p < 9; p++) {
+    const want = Math.round((total * shares[p]) / shareSum);
+    if (want < 1) continue;
+    // Spacing for this part if it were even, and a grid to find neighbours by.
+    const spacing = Math.sqrt((areas[p] * mean) / want);
+    const cell = spacing;
+    const grid = new Map<number, number[]>();
+    const keyOf = (x: number, y: number) => Math.floor(x / cell) * 73856093 + Math.floor(y / cell);
+    // Where each disc starts in the part's area, to pick a place along it in proportion to its width there.
+    const swept = p < 6;
+    const cum: number[] = [0];
+    if (swept) for (let i = PF[p] + 1; i < PE[p]; i++) cum.push(cum[cum.length - 1] + (D[i * 3 + 2] + D[i * 3 - 1]) * (CUM[i] - CUM[i - 1]));
+    let got = 0;
+    for (let tries = want * 60; tries > 0 && got < want; tries--) {
+      let a: number;
+      let b: number;
+      let x: number;
+      let y: number;
+      if (swept) {
+        const v = rnd() * cum[cum.length - 1];
+        let lo = 0;
+        while (lo < cum.length - 2 && cum[lo + 1] < v) lo++;
+        const i = PF[p] + lo;
+        const u = (v - cum[lo]) / (cum[lo + 1] - cum[lo] || 1);
+        a = lerp(CUM[i], CUM[Math.min(i + 1, PE[p] - 1)], u) / (CUM[PE[p] - 1] || 1);
+        b = rnd() * 2 - 1;
+        const r = lerp(D[i * 3 + 2], D[Math.min(i + 1, PE[p] - 1) * 3 + 2], u);
+        x = D[i * 3] + NX[i] * b * r;
+        y = D[i * 3 + 1] + NY[i] * b * r;
+      } else {
+        const j = p - SKULL;
+        const slot = j ? j : 3;
+        a = rnd() * 2 * Math.PI - Math.PI;
+        b = Math.sqrt(rnd());
+        const r = b * reach(slot, a);
+        x = CEN[slot * 2] + Math.cos(a) * r;
+        y = CEN[slot * 2 + 1] + Math.sin(a) * r;
+        if (j) {
+          // The ears are laid out in the head's own frame, like the skull, so they turn with it.
+          const [, , hc, hs, , flip] = s.head;
+          a = Math.atan2(Math.sin(a - Math.atan2(hs, hc)), Math.cos(a - Math.atan2(hs, hc)) * flip);
         }
       }
-    }
-  });
-  chains(s, inset);
-  const rims = PE.map((end) => [S0[end - 1], S1[end - 1]].map((l) => Math.max(1, Math.round(l / d))));
-  const ends = PF.map((from, p) => [D[from * 3 + 2], D[(PE[p] - 1) * 3 + 2]]);
-  for (let p = 0; p < 6; p++) {
-    keep[p].forEach((row, r) => {
-      for (let j = 0; j < row.length; j++) if (row[j]) add(ROW, p, j / (row.length - 1), (r - rows[p]) * d, 0);
-    });
-    rims[p].forEach((n, side) => {
-      for (let j = 0; j <= n; j++) add(RIM, p, j / n, side ? 1 : -1, 1);
-    });
-    for (let e = 0; e < 2; e++) {
-      for (let k = 0; ends[p][e] - inset - k * d >= 0.3 * d; k++) {
-        const n = Math.max(2, Math.round((Math.PI * (ends[p][e] - inset - k * d)) / d));
-        for (let j = 1; j < n; j++) add(e ? CAP1 : CAP0, p, j / n, k * d, k ? 0 : 1);
+      const w = density(Math.abs(b));
+      if (rnd() * style.edge > w) continue;
+      const near = (spacing * style.even * 0.72) / Math.sqrt(w / mean);
+      const gx = Math.floor(x / cell);
+      const gy = Math.floor(y / cell);
+      let clash = false;
+      for (let ix = gx - 2; ix <= gx + 2 && !clash; ix++) {
+        for (let iy = gy - 2; iy <= gy + 2 && !clash; iy++) {
+          const list = grid.get(ix * 73856093 + iy);
+          if (!list) continue;
+          for (let k = 0; k < list.length; k += 3) {
+            if (Math.hypot(list[k] - x, list[k + 1] - y) < (near + list[k + 2]) / 2) {
+              clash = true;
+              break;
+            }
+          }
+        }
       }
+      if (clash) continue;
+      const key = keyOf(x, y);
+      if (!grid.has(key)) grid.set(key, []);
+      grid.get(key)!.push(x, y, near);
+      got++;
+      // A few in the outline's band step just outside it: strays.
+      const stray = Math.abs(b) > 1 - style.band && rnd() < style.stray / style.band;
+      if (stray) b = Math.sign(b) * (1.06 + 0.3 * rnd());
+      add(swept ? SWEPT : POLAR, p, a, b, Math.abs(b) > 0.8 ? 1 : 0, stray);
+      if (swept) Co[Co.length - 1] = coatOf(p, a, cl(b, -1, 1));
     }
   }
-  for (let j = 0; j < 3; j++) {
-    const q = s.polys[j];
-    outline(q, j);
-    const n = q.length / 2;
-    let rm = 0;
-    for (let i = 0; i < n; i++) rm += Math.hypot(q[i * 2] - CEN[j * 2], q[i * 2 + 1] - CEN[j * 2 + 1]) / n;
-    const per = PER[j][n];
-    for (let k = 0; inset + k * d < rm - 0.5 * d; k++) {
-      const m = Math.max(3, Math.round((per * (1 - (inset + k * d) / rm)) / d));
-      for (let i = 0; i < m; i++) add(RING, SKULL + j, i / m, k * d, k ? 0 : 1);
-    }
-    add(RING, SKULL + j, 0, -1, 0);
-  }
+  for (const lat of [-1, 1]) for (let j = 0; j < EYE_DOTS; j++) add(EYE_DOT, SKULL, (j / EYE_DOTS) * 2 * Math.PI, lat, 0, false);
   const n = K.length;
+  for (let i = n - 2 * EYE_DOTS; i < n; i++) Sz[i] = Math.max(Sz[i], 1.5 * grow);
   return {
     n,
     kind: Uint8Array.from(K),
@@ -1041,30 +1181,124 @@ export function swarm(shapes: Shape[], d: number, inset: number): Swarm {
     a: Float32Array.from(A),
     b: Float32Array.from(Bv),
     edge: Uint8Array.from(Ed),
-    rows,
-    d,
+    coat: Uint8Array.from(Co),
+    size: Float32Array.from(Sz),
+    level: Uint8Array.from(Lv),
+    d: Math.sqrt(sum / total),
     inset,
     x: new Float32Array(n),
     y: new Float32Array(n),
     tone: new Uint8Array(n),
+    lit: new Uint8Array(n),
   };
 }
 
+// The face, in the head's own units: across (in profile, toward the nose) and up. Each mark is a stroke seen from the
+// front and the same stroke in profile, eased between the two as the head turns: [front x0, y0, x1, y1, profile x0, y0,
+// x1, y1, half width].
+const MARKS = [
+  // The forehead's M: three stripes up from between the eyes, the outer two leaning out; in profile they run back over the crown.
+  0, 1.7, 0, 4.4, 3.1, 2.5, 1.3, 4.7, 0.3,
+  -1.05, 1.6, -1.8, 4.0, 2.1, 2.3, 0.1, 4.6, 0.28,
+  1.05, 1.6, 1.8, 4.0, 4.0, 2.0, 2.5, 4.1, 0.28,
+  // The cheeks: a line back from the outer corner of each eye, and a shorter one under it.
+  -3.2, -0.1, -5.2, -0.8, 1.9, 0.5, -1.7, -0.2, 0.28,
+  3.2, -0.1, 5.2, -0.8, 1.9, 0.5, -1.7, -0.2, 0.28,
+  -3.0, -1.3, -4.7, -2.2, 1.9, -0.6, -1.3, -1.5, 0.26,
+  3.0, -1.3, 4.7, -2.2, 1.9, -0.6, -1.3, -1.5, 0.26,
+];
+
+/** Distance from (x, y) to the segment (ax, ay)-(bx, by). */
+function toSegment(x: number, y: number, ax: number, ay: number, bx: number, by: number) {
+  const vx = bx - ax;
+  const vy = by - ay;
+  const u = cl(((x - ax) * vx + (y - ay) * vy) / (vx * vx + vy * vy || 1));
+  return Math.hypot(x - ax - vx * u, y - ay - vy * u);
+}
+
+/** Whether (x, y) is inside the ellipse at (cx, cy) with radii (rx, ry). */
+const inOval = (x: number, y: number, cx: number, cy: number, rx: number, ry: number) => ((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2 < 1;
+
+/** Where an eye's dot at angle `ang` sits in the eye's own frame (u across, v up, in eye radii), for eyes `open` (0..1). */
+function eyeDot(ang: number, open: number) {
+  const u = 0.95 * Math.cos(ang);
+  // Shut, the ring folds down into the curve of the lower lid.
+  const shut = -0.12 - 0.42 * Math.sqrt(Math.max(0, 1 - u * u));
+  const e = open * open * (3 - 2 * open);
+  return [u, lerp(shut, 0.95 * Math.sin(ang), e)];
+}
+
+/**
+ * The tone of the skull at (x, y) (rig units), for eyes `open` (0..1), or HIDDEN where the face is a gap: inside an
+ * open eye (its ring of dots is the eye), along a shut eye's lid, the nose, an open mouth. Around them: a cream muzzle
+ * and chin, the stripes on the forehead and cheeks, a ginger face under a darker crown.
+ */
+function face(s: Shape, x: number, y: number, open: number) {
+  const E = s.eyes;
+  for (let e = 0; e < E.length; e += 6) {
+    const dx = x - E[e];
+    const dy = y - E[e + 1];
+    const c = Math.cos(E[e + 4]);
+    const sn = Math.sin(E[e + 4]);
+    const eu = (dx * c + dy * sn) / E[e + 2];
+    const ev = (-dx * sn + dy * c) / E[e + 3];
+    if (open > 0.3 ? eu * eu + ev * ev < 1.35 : Math.abs(eu) < 1.1 && Math.abs(ev + 0.12 + 0.42 * Math.sqrt(Math.max(0, 1 - eu * eu))) < 0.4) return HIDDEN;
+  }
+  const [hx, hy, c, sn, k, flip, side, mouth] = s.head;
+  const dx = (x - hx) / k;
+  const dy = (y - hy) / k;
+  const lx = (dx * c + dy * sn) * flip;
+  const ly = -dx * sn + dy * c;
+  const L = (a: number, b: number) => a + (b - a) * side;
+  const ny = L(-0.75, -0.1);
+  if (inOval(lx, ly, L(0, 6.0), ny, L(0.85, 0.5), L(0.6, 0.45)) && ly < ny + 0.3 && Math.abs(lx - L(0, 6.0)) < 0.9 + (ly - ny) * 1.2) return HIDDEN;
+  if (mouth > 0.05) {
+    if (side < 0.5) {
+      const cy = -2.1 - 0.85 * mouth;
+      const rx = 0.45 + 0.95 * mouth;
+      const ry = 0.25 + 1.05 * mouth;
+      if (inOval(lx, ly, 0, cy, rx, ry)) {
+        if (ly > cy + 0.45 * ry && Math.abs(Math.abs(lx) - 0.6 * rx) < 0.3) return CREAM;
+        return ly < cy - 0.45 * ry ? GINGER : HIDDEN;
+      }
+    } else {
+      // In profile: the wedge between the upper jaw and the dropped lower jaw.
+      const up = -1.05 + (lx + 0.9) * 0.06;
+      const down = -1.5 - (lx + 0.9) * Math.tan(0.55 * mouth);
+      if (lx > 0.4 && lx < 5.8 && ly < up && ly > down + 0.35) return ly < down + 0.9 ? GINGER : HIDDEN;
+    }
+  } else if (side < 0.5 ? Math.abs(lx) < 0.17 && ly < -1.3 && ly > -2.05 : toSegment(lx, ly, 5.6, -1.75, 3.9, -2.15) < 0.17) {
+    return STRIPE;
+  }
+  if (inOval(lx, ly, L(0, 4.6), L(-2.1, -1.5), L(1.95, 1.9), L(1.25, 1.2)) || ly < L(-3.5, -2.8)) return CREAM;
+  for (let m = 0; m < MARKS.length; m += 9) {
+    if (toSegment(lx, ly, L(MARKS[m], MARKS[m + 4]), L(MARKS[m + 1], MARKS[m + 5]), L(MARKS[m + 2], MARKS[m + 6]), L(MARKS[m + 3], MARKS[m + 7])) < MARKS[m + 8]) return STRIPE;
+  }
+  return ly > 2.7 ? COAT : GINGER;
+}
+
+/** Below this, a place off the middle line is bunching up on the inside of a bend (it would fold over itself), and is left out. */
+const FOLD = 0.3;
+
 /**
  * Places the particles on this shape (its field `f`): rig (0, 0) lands on (ox, gy), `sc` px per rig unit.
- * `open` (0..1) blinks the eyes. Writes each particle's position and tone (HIDDEN when a part in front covers it).
+ * `open` (0..1) closes the eyes further than the pose has them. Writes each particle's position, tone (HIDDEN when a
+ * part in front covers it) and brightness.
  */
 export function place(w: Swarm, s: Shape, f: Field, ox: number, gy: number, sc: number, open = 1) {
   const { d, inset } = w;
   const D = s.discs;
-  chains(s, inset);
-  rowLengths(s, w.rows, d);
+  chains(s);
   for (let j = 0; j < 3; j++) outline(s.polys[j], j);
+  const eyes = cl(s.open * open);
+  const [, , hc, hs, , flip, side] = s.head;
+  const turn = Math.atan2(hs, hc);
   // The far ear is a step dimmer in profile, the same as the near one from the front.
-  const farEar = Math.abs(s.yaw) > 0.5 ? DIM : LIT;
-  // Looking back, the head is drawn mirrored: each particle takes the mirrored place on the mirrored outline
-  // (and each ear the other ear's), so as the head turns past the camera every particle stays on its side.
+  const farDim = side > 0.5;
+  // Looking back, the head is drawn mirrored, and each ear takes the other ear's particles.
   const back = s.yaw < 0;
+  const front = s.tailFront > 0.5;
+  const E = s.eyes;
   for (let i = 0; i < w.n; i++) {
     const p = w.part[i];
     const kind = w.kind[i];
@@ -1073,130 +1307,76 @@ export function place(w: Swarm, s: Shape, f: Field, ox: number, gy: number, sc: 
     let x = 0;
     let y = 0;
     let ok = true;
-    let tone = p < 2 ? DIM : LIT;
-    // How deep inside its own part the particle is meant to be (rig units, negative inside).
-    let want = 0;
-    if (p < 6) {
+    let tone = w.coat[i];
+    let lit = w.level[i];
+    if (kind === SWEPT) {
       const from = PF[p];
       const end = PE[p];
-      if (kind === CAP0 || kind === CAP1) {
-        // A half ring around the round end, facing out along the part.
-        const q = kind === CAP1 ? end - 1 : from;
-        const q2 = kind === CAP1 ? Math.max(from, end - 4) : Math.min(end - 1, from + 3);
-        let tx = D[q * 3] - D[q2 * 3];
-        let ty = D[q * 3 + 1] - D[q2 * 3 + 1];
-        const l = Math.hypot(tx, ty) || 1;
-        tx /= l;
-        ty /= l;
-        const rho = D[q * 3 + 2] - inset - b;
-        const th = (a - 0.5) * Math.PI;
-        const c = Math.cos(th);
-        const sn = Math.sin(th);
-        x = D[q * 3] + rho * (c * tx - sn * ty);
-        y = D[q * 3 + 1] + rho * (c * ty + sn * tx);
-        ok = rho >= 0.3 * d;
-        want = -inset - b;
+      const q = seek(CUM, from, end, a * CUM[end - 1]);
+      const q1 = Math.min(q + 1, end - 1);
+      const u = segU;
+      const r = lerp(D[q * 3 + 2], D[q1 * 3 + 2], u) - inset;
+      const off = b * r;
+      x = lerp(D[q * 3], D[q1 * 3], u) + lerp(NX[q], NX[q1], u) * off;
+      y = lerp(D[q * 3 + 1], D[q1 * 3 + 1], u) + lerp(NY[q], NY[q1], u) * off;
+      ok = 1 + lerp(KAP[q], KAP[q1], u) * off > FOLD;
+      // How deep inside its own part it is meant to be (rig units, negative inside).
+      const want = Math.abs(off) - r - inset;
+      // What is in front: the body before the legs and the tail, the near legs before the far ones and the tail, the
+      // skull before the body. A tail wrapped toward the camera lies over the body and the legs instead.
+      if (p === TAIL_I && front) {
+        if (ok && within(0, x, y, 0)) ok = false;
       } else {
-        // A row is looked up along its own length (so its particles stay evenly spaced round a bend), a rim along its own.
-        const len = end - from;
-        const o = kind === ROW ? ROFF[p] + (Math.round(b / d) + w.rows[p]) * len - from : 0;
-        const S = kind === ROW ? ROWS : b < 0 ? S0 : S1;
-        const q = seek(S, o + from, o + end, a * S[o + end - 1]) - o;
-        const q1 = Math.min(q + 1, end - 1);
-        const u = segU;
-        const cx = lerp(D[q * 3], D[q1 * 3], u);
-        const cy = lerp(D[q * 3 + 1], D[q1 * 3 + 1], u);
-        const r = lerp(D[q * 3 + 2], D[q1 * 3 + 2], u) - inset;
-        const nx = lerp(NX[q], NX[q1], u);
-        const ny = lerp(NY[q], NY[q1], u);
-        if (kind === ROW) {
-          ok = Math.abs(b) <= r - 0.7 * d && (q1 === q || S[o + q1] - S[o + q] >= FOLD * (CUM[q1] - CUM[q]));
-          x = cx + nx * b;
-          y = cy + ny * b;
-          want = Math.abs(b) - r - inset;
-        } else if (r < 0.35 * d) {
-          // Too thin for two rims: one row down the middle.
-          ok = b > 0;
-          x = cx;
-          y = cy;
-          want = -r - inset;
-        } else {
-          x = cx + nx * r * b;
-          y = cy + ny * r * b;
-          want = -inset;
-        }
+        if (ok && p !== BODY_I && sample(f, f.body, x, y) < -0.6 * d) ok = false;
+        if (ok && (p < 2 || p === TAIL_I) && sample(f, f.near, x, y) < 0.4 * d) ok = false;
+        if (ok && front && sample(f, f.tail, x, y) < 0.3 * d) ok = false;
       }
-      // What is in front: the body before the legs and the tail, the near legs before the far ones and the tail, the skull
-      // before the body. Where a leg joins the body there is no outline: the body's rim gives way and the leg's particles
-      // carry on up to the body's edge, so the join is one surface of dots.
-      if (ok && p !== BODY_I && sample(f, f.body, x, y) < -0.6 * d) ok = false;
-      if (ok && (p < 2 || p === TAIL_I) && sample(f, f.near, x, y) < 0.5 * d) ok = false;
       if (ok && p === BODY_I && within(0, x, y, -0.4 * d)) ok = false;
-      if (ok && p === BODY_I && w.edge[i] && (sample(f, f.near, x, y) < -0.3 * d || sample(f, f.far, x, y) < -0.3 * d)) ok = false;
       // Where a part lies over itself (a folded leg: the thigh over the shank), one layer shows: the one the spot is deepest in.
       const own = p === BODY_I ? f.body : p < 2 ? f.far : p < 4 ? f.near : null;
-      if (ok && own && sample(f, own, x, y) < want - 2 * d) ok = false;
-      if (ok && w.edge[i]) {
-        // The rim follows the field's outline where the parts flow into each other: pulled onto it when it is close,
-        // less the further it is (deep inside, a rim is not the outline), so nothing snaps.
-        const v = sample(f, f.d, x, y) + inset;
-        const pull = cl(1 - (Math.abs(v) - 0.4 * d) / d);
-        if (pull > 0) {
-          const h = f.g;
-          const gx = (sample(f, f.d, x + h, y) - sample(f, f.d, x - h, y)) / (2 * h);
-          const gy2 = (sample(f, f.d, x, y + h) - sample(f, f.d, x, y - h)) / (2 * h);
-          const gl = Math.hypot(gx, gy2);
-          if (gl > 0.3) {
-            x -= (gx / gl) * v * pull;
-            y -= (gy2 / gl) * v * pull;
-          }
-        }
-      }
-    } else {
+      if (ok && own && sample(f, own, x, y) < want - 1.5 * d) ok = false;
+      // A near leg's outline across the body: those dots brighten, the way the reference's inner contours do.
+      if (ok && p === BODY_I && (i * 0.618034) % 1 < 0.5 && Math.abs(sample(f, f.near, x, y)) < 0.45 * d) lit = 0;
+      if (p < 2) tone = DIMMER[tone];
+    } else if (kind === POLAR) {
       const j = back && p !== SKULL ? EAR_FAR + EAR_NEAR - p - SKULL : p - SKULL;
-      const per = PER[j];
-      const q = s.polys[j];
-      const n = q.length / 2;
-      // Mirrored, the skull's outline runs the other way from its crown, an ear's from its inner base (its vertex 12).
-      const around = back ? (((j ? per[12] / per[n] : 0) - a) % 1 + 1) % 1 : a;
-      const cx = CEN[j * 2];
-      const cy = CEN[j * 2 + 1];
-      if (b < 0) {
-        x = cx;
-        y = cy;
-      } else {
-        const v = seek(per, 0, n + 1, around * per[n]);
-        const v1 = (v + 1) % n;
-        const px = lerp(q[(v % n) * 2], q[v1 * 2], segU);
-        const py = lerp(q[(v % n) * 2 + 1], q[v1 * 2 + 1], segU);
-        const l = Math.hypot(cx - px, cy - py) || 1;
-        const depth = inset + b;
-        ok = depth < l - 0.5 * d;
-        x = px + ((cx - px) / l) * depth;
-        y = py + ((cy - py) / l) * depth;
-      }
+      // At its angle in the head's frame (mirrored looking back, turned with the head), a fraction of the way to the outline.
+      const wa = Math.atan2(Math.sin(a), Math.cos(a) * flip) + turn;
+      const r = b * reach(j, wa);
+      x = CEN[j * 2] + Math.cos(wa) * r;
+      y = CEN[j * 2 + 1] + Math.sin(wa) * r;
       if (p === SKULL) {
         // The back of the skull runs into the neck: there the body's particles carry on.
-        if (ok && w.edge[i] && sample(f, f.body, x, y) < -0.6 * d) ok = false;
-        for (let e = 0; ok && e < s.eyes.length; e += 5) {
-          const ry = s.eyes[e + 3] * open;
-          if (ry < 0.25 * d) continue;
-          const dx = x - s.eyes[e];
-          const dy = y - s.eyes[e + 1];
-          const c = Math.cos(s.eyes[e + 4]);
-          const sn = Math.sin(s.eyes[e + 4]);
-          const eu = (dx * c + dy * sn) / (s.eyes[e + 2] + 0.3 * d);
-          const ev = (-dx * sn + dy * c) / (ry + 0.3 * d);
-          if (eu * eu + ev * ev < 1) ok = false;
-        }
+        if (b > 0.8 && sample(f, f.body, x, y) < -0.6 * d) ok = false;
+        tone = face(s, x, y, eyes);
+        if (tone === HIDDEN) ok = false;
       } else {
-        if (ok && within(0, x, y, 0.4 * d)) ok = false;
-        if (ok && j === 2 && within(1, x, y, 0.4 * d)) ok = false;
+        if (within(0, x, y, 0.3 * d)) ok = false;
+        if (ok && j === 2 && within(1, x, y, 0.3 * d)) ok = false;
+        // Its rim in the coat; inside, pale from the front and the coat's back of the ear in profile.
+        tone = b > 0.75 ? COAT : side < 0.6 ? CREAM_DIM : SHADE;
+        if (j === 2 && farDim) tone = DIMMER[tone];
       }
-      tone = j === 2 ? farEar : LIT;
+    } else {
+      // An eye's ring: on the eye on that side of the face, if it shows.
+      ok = false;
+      for (let e = 0; e < E.length; e += 6) {
+        if (E[e + 5] !== b) continue;
+        const [u, v] = eyeDot(a, eyes);
+        const ex = u * E[e + 2];
+        const ey = v * E[e + 3];
+        const c = Math.cos(E[e + 4]);
+        const sn = Math.sin(E[e + 4]);
+        x = E[e] + ex * c - ey * sn;
+        y = E[e + 1] + ex * sn + ey * c;
+        ok = E[e + 2] > 0.35;
+        tone = eyes > 0.3 ? EYE : STRIPE;
+        lit = 0;
+      }
     }
     w.x[i] = ox + x * sc;
     w.y[i] = gy - y * sc;
     w.tone[i] = ok ? tone : HIDDEN;
+    w.lit[i] = lit;
   }
 }

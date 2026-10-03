@@ -19,6 +19,19 @@ export const GREEN: RGB = [87, 217, 163];
 export const CYAN: RGB = [110, 224, 255];
 export const AMBER: RGB = [255, 200, 87];
 export const RED: RGB = [255, 92, 92];
+/**
+ * The cat's coat, and nothing else: a tabby in warm steps, darkest first (deep stripe, stripe, the coat's far step, coat,
+ * ginger, cream's far step, cream). Her eyes are the system's green.
+ */
+export const COAT_RGB: readonly RGB[] = [
+  [104, 74, 54],
+  [142, 100, 66],
+  [150, 104, 66],
+  [196, 138, 84],
+  [226, 168, 104],
+  [196, 164, 138],
+  [236, 225, 208],
+];
 
 export const TAU = Math.PI * 2;
 /** IBM Plex Mono advance width, in em. */

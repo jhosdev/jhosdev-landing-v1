@@ -2,30 +2,32 @@
 // lives in, it places the cat's particles at timeline time t (seconds; the phase
 // runs from CAT_AT to the variant's `morph`). Every variant opens the way the
 // boot does: a quiet panel of dots (the Machine's grid), then dots of that grid
-// light up and travel to their places on the cat, then the cat moves. scene.ts
-// plays it inside the intro and then sends the same particles to the handle;
-// /lab/ loops it in a gallery. Pure functions of time, like everything else the
-// Machine draws.
+// light up and travel to their places on the cat, and she is grey: the Machine
+// sees a shape, brightness only. The first pass of the amber scan classifies
+// her: behind the line her coat and her eyes come on. Then she does what she
+// does, and scene.ts sends the same particles to the handle; /lab/ loops it in
+// a gallery. Pure functions of time, like everything else the Machine draws.
 import { E, FAINT, P, RED, TAU, cl, hash, lerp, rgb } from './draw';
-import { catSwarm, eyesOpen, placeCat, tailSwing } from './cat';
-import { HIDDEN, POUNCE, newPose, newShape, pouncePose, sitPose, skin, walkPose, type Pose, type Shape, type Swarm } from './catrig';
+import { LOOK, STYLES, catSwarm, placeCat } from './cat';
+import { GREY, HIDDEN, POUNCE, newPose, newShape, pouncePose, skin, walkPose, type Pose, type Shape, type Style, type Swarm } from './catrig';
+import { bow, drowsy, keyed, loaf, sleep, slowBlink, stand, yawn, type Keys } from './catkeys';
 
 /** What the particles are before they resolve into the handle. `?intro=<name>` picks one. */
-export const INTROS = ['sit', 'walk', 'silhouette', 'pounce'] as const;
+export const INTROS = ['nap', 'pounce', 'walk', 'stretch'] as const;
 export type IntroName = (typeof INTROS)[number];
 /** The one that plays when nothing is asked for. */
-export const DEFAULT_INTRO: IntroName = 'sit';
+export const DEFAULT_INTRO: IntroName = 'nap';
 export const introName = (s: string | null | undefined): IntroName => (INTROS as readonly string[]).includes(s ?? '') ? (s as IntroName) : DEFAULT_INTRO;
 /**
  * Per variant, in timeline seconds: `form`, how long the cat takes to materialise out of the panel of dots (the home
- * gives it FORM_HOME seconds; 0 when the variant's own motion does it); `morph`, when the cat starts resolving into the
- * handle; `extra`, home seconds its motion gets beyond the pace of the rest of the cut.
+ * gives it FORM_HOME seconds); `morph`, when the cat starts resolving into the handle; `extra`, home seconds its motion
+ * gets beyond the pace of the rest of the cut (a cat moves at a cat's pace).
  */
 export const VARIANT: Record<IntroName, { form: number; morph: number; extra: number }> = {
-  sit: { form: 0.6, morph: 8.6, extra: 0 },
-  walk: { form: 0.55, morph: 8.8, extra: 1.05 },
-  silhouette: { form: 0, morph: 8.6, extra: 0.3 },
+  nap: { form: 0.6, morph: 9.0, extra: 0.48 },
   pounce: { form: 0.35, morph: 8.63, extra: 0.72 },
+  walk: { form: 0.55, morph: 8.8, extra: 1.05 },
+  stretch: { form: 0.6, morph: 9.1, extra: 0.6 },
 };
 /** Home seconds the cat takes to materialise. */
 export const FORM_HOME = 1;
@@ -35,6 +37,8 @@ export const CAT_AT = 6.5;
 export const CUT_RATE = 4 / 3;
 /** Timeline seconds of signal tear after a hard cut (scene.ts); the cut into ACQUIRE plays it at the cut's pace, before the cat. */
 export const TEAR = 0.16;
+/** The amber scan line's first pass down the frame (scene.ts draws it), in timeline seconds: it classifies her. */
+export const SCAN = [7, 8] as const;
 
 /** Piecewise linear through the knots (x, y), held flat past the last one. */
 export function along(k: number[][], x: number) {
@@ -70,7 +74,7 @@ export interface CatBox {
 }
 
 export interface CatPhase {
-  /** The cat's particles at time t: where they are (CSS px) and their tones. */
+  /** The cat's particles at time t: where they are (CSS px), their tones and brightness. */
   frame: (t: number) => Swarm;
   /** Drawn under / over the particles. `a` goes to 0 as the particles leave for the handle. */
   under?: (o: CanvasRenderingContext2D, t: number, a: number) => void;
@@ -80,21 +84,44 @@ export interface CatPhase {
 const pose = newPose();
 const shape = newShape();
 
-/** A cat of particles posed by `at` (which returns how open its eyes are); `times` cover every pose it will take. */
-function dotCat(sc: number, ox: number, gy: number, at: (p: Pose, t: number) => number, times: number[]) {
-  const shapes = times.map((t): Shape => {
+/** A cat of particles posed by `at` (returns how open the eyes are, on top of the pose); `times` cover every pose it takes. */
+function dotCat(sc: number, ox: number, gy: number, at: (p: Pose, t: number) => number, times: number[], style: Style) {
+  // Laid out standing, every part at full length; the poses it takes say how wide each part gets.
+  const rest = newShape();
+  stand(pose, 0);
+  skin(pose, rest);
+  const shapes = [rest, ...times.map((t): Shape => {
     const s = newShape();
     at(pose, t);
     skin(pose, s);
     return s;
-  });
-  const w = catSwarm(shapes, sc);
+  })];
+  const w = catSwarm(shapes, sc, style);
   return (t: number) => {
     const open = at(pose, t);
     skin(pose, shape);
     placeCat(w, shape, ox, gy, sc, open);
     return w;
   };
+}
+
+/** How far the poses reach (rig units): left, right, top. */
+function reach(at: (p: Pose, t: number) => unknown, times: number[]) {
+  let lo = Infinity;
+  let hi = -Infinity;
+  let top = 0;
+  for (const t of times) {
+    at(pose, t);
+    skin(pose, shape);
+    const d = shape.discs;
+    for (let i = 0; i < d.length; i += 3) {
+      lo = Math.min(lo, d[i] - d[i + 2]);
+      hi = Math.max(hi, d[i] + d[i + 2]);
+      top = Math.max(top, d[i + 1] + d[i + 2]);
+    }
+    for (const q of shape.polys) for (let i = 0; i < q.length; i += 2) [lo, hi, top] = [Math.min(lo, q[i]), Math.max(hi, q[i]), Math.max(top, q[i + 1])];
+  }
+  return { lo, hi, top };
 }
 
 /** Pitch of the Machine's dot grid (scene.ts paints it; a dot sits at 14 + 28k in both directions). */
@@ -120,7 +147,10 @@ function arrival(w: Swarm, when: (i: number) => number[]): Arrival {
   return a;
 }
 
-/** Materialising: a particle not yet gone is not drawn (its grid dot is the panel's), lights up on its dot, then travels to its place. */
+/**
+ * Materialising: a particle not yet gone is not drawn (its grid dot is the panel's), lights up on its dot, then
+ * travels to its place, small and grey until it is there.
+ */
 function materialise(w: Swarm, a: Arrival, t: number) {
   for (let i = 0; i < w.n; i++) {
     const tone = w.tone[i];
@@ -133,7 +163,8 @@ function materialise(w: Swarm, a: Arrival, t: number) {
     const e = E.inOutCubic(cl(k));
     w.x[i] = lerp(a.nx[i], w.x[i], e);
     w.y[i] = lerp(a.ny[i], w.y[i], e);
-    w.tone[i] = k < 0 ? 2 : Math.round(lerp(3, tone, e));
+    w.tone[i] = k < 0 ? 2 : e < 0.6 ? 3 : tone;
+    w.lit[i] = k < 0 ? 0 : 1;
   }
   return w;
 }
@@ -149,38 +180,13 @@ function rising(w: Swarm, form: number, gy: number) {
   });
 }
 
-/** The sitting cat's place in the frame, as the sit and the silhouette draw it. */
-function seat(box: CatBox) {
-  const size = Math.min(box.h * 0.94, box.w * 0.7);
-  return { sc: size / 52, ox: box.cx - size / 2 + size * 0.648, gy: box.cy - size / 2 + size * 0.97 };
-}
-
-/** sit: it materialises sitting, looks back over its shoulder, flicks its tail and blinks while it is scanned. */
-function sit(box: CatBox): CatPhase {
-  const { sc, ox, gy } = seat(box);
-  const { form } = VARIANT.sit;
-  const cat = dotCat(sc, ox, gy, (p, t) => {
-    sitPose(p, tailSwing(t - 7.25) * P(t, 7.1, 7.4), 1 - 2 * E.inOutCubic(P(t, 7.4, 7.75)));
-    return eyesOpen(t - 5.12);
-  }, [6.5, 7.55, 7.75, 7.9, 8.3]);
-  const a = rising(cat(CAT_AT + form), form, gy);
-  return { frame: (t) => materialise(cat(t), a, t) };
-}
-
-/** silhouette: its outline is traced dot by dot, and the first pass of the scan line fills it in. */
-function silhouette(box: CatBox): CatPhase {
-  const { sc, ox, gy } = seat(box);
-  const cat = dotCat(sc, ox, gy, (p, t) => {
-    sitPose(p, t < 8 ? 0 : tailSwing(t - 7.55) * 0.5);
-    return eyesOpen(t - 5.12);
-  }, [6.5, 8.2, 8.5]);
-  const w = cat(CAT_AT);
-  const top = box.cy - box.h / 2;
-  // The outline clockwise from the top, as the trace goes round; the fill as the scan line (scene.ts, 7 to 8) passes.
-  const a = arrival(w, (i) =>
-    w.edge[i] ? [6.6 + 0.55 * ((Math.atan2(w.x[i] - box.cx, box.cy - w.y[i]) / TAU + 1) % 1), 0.12] : [6.93 + cl((w.y[i] - top) / box.h), 0.07],
-  );
-  return { frame: (t) => materialise(cat(t), a, t) };
+/** Grey below the scan line until its first pass is over: the Machine has not classified that part of her yet. */
+function classified(w: Swarm, box: CatBox, t: number) {
+  const k = P(t, SCAN[0], SCAN[1]);
+  if (k >= 1) return w;
+  const line = box.cy - box.h / 2 + k * box.h;
+  for (let i = 0; i < w.n; i++) if (w.tone[i] !== HIDDEN && w.y[i] > line) w.tone[i] = GREY[w.tone[i]];
+  return w;
 }
 
 /** The ground the side-on cat stands on: a measuring line with a tick every ten rig units. */
@@ -189,6 +195,65 @@ function ground(o: CanvasRenderingContext2D, box: CatBox, a: number, ox: number,
   o.fillStyle = rgb(FAINT, a);
   o.fillRect(left + 10, gy, box.w - 20, 1);
   for (let x = (((ox - left) % (10 * sc)) + 10 * sc) % (10 * sc); x < box.w - 10; x += 10 * sc) if (x > 10) o.fillRect(left + x, gy, 1, 5);
+}
+
+/** A variant made of keyed poses: fitted in the box, standing on its ground, materialising out of the panel. */
+function keyedPhase(box: CatBox, keys: Keys, form: number, morph: number, style: Style, open?: (t: number) => number): CatPhase {
+  const at = (p: Pose, t: number) => {
+    keyed(p, keys, t);
+    return open ? open(t) : 1;
+  };
+  const times = Array.from({ length: 13 }, (_, i) => lerp(CAT_AT, morph, i / 12));
+  const { lo, hi, top } = reach(at, times);
+  // As large as the frame allows, but never larger than the sitting cat of old by more than a quarter: she is a small cat.
+  const sc = Math.min((box.h * 0.82) / top, (box.w - 24) / (hi - lo), ((box.h * 0.94) / 52) * 1.3);
+  const ox = box.cx - ((lo + hi) / 2) * sc;
+  const gy = box.cy + Math.min(box.h * 0.42, (top * sc) / 2 + box.h * 0.08);
+  const cat = dotCat(sc, ox, gy, at, times.slice(0, 7), style);
+  const a = rising(cat(CAT_AT + form), form, gy);
+  return {
+    frame: (t) => classified(materialise(cat(t), a, t), box, t),
+    under: (o, t, k) => ground(o, box, k * P(t, 6.5, 6.75), ox, gy, sc),
+  };
+}
+
+/**
+ * nap: she materialises asleep in a loaf, the way she spends most of her day. The scan classifies her while she
+ * sleeps; as the line passes her ears one of them twitches; she lifts her head, her eyes open (green: the system's
+ * nominal) and she gives the camera a slow blink before the particles leave for the handle.
+ */
+function nap(box: CatBox, style: Style): CatPhase {
+  const { form, morph } = VARIANT.nap;
+  const keys: Keys = [
+    [CAT_AT, 7.62, (p, t) => {
+      sleep(p, t - 4);
+      // The scan line crosses her ears: one of them flicks.
+      p.earB = 0.55 * Math.exp(-(((t - 7.28) / 0.05) ** 2)) + 0.4 * Math.exp(-(((t - 7.46) / 0.045) ** 2));
+    }],
+    [7.95, 8.1, drowsy],
+    [8.2, morph, (p, t) => {
+      drowsy(p, t);
+      p.headY = 16.3;
+      p.roll = 0.05;
+      p.open = 0.75 * slowBlink(t * 2, 8.25 * 2);
+    }],
+  ];
+  return keyedPhase(box, keys, form, morph, style);
+}
+
+/** stretch: she materialises lying awake in a loaf, yawns at the scanner, then gets up into a long front stretch, tail high. */
+function stretch(box: CatBox, style: Style): CatPhase {
+  const { form, morph } = VARIANT.stretch;
+  const keys: Keys = [
+    [CAT_AT, 7.1, loaf],
+    [7.3, 7.95, yawn],
+    [8.1, 8.15, (p, t) => {
+      loaf(p, t);
+      p.open = 0.5;
+    }],
+    [8.6, morph, bow],
+  ];
+  return keyedPhase(box, keys, form, morph, style);
 }
 
 /** How far a shape reaches left and right (rig units). */
@@ -204,7 +269,7 @@ function span(s: Shape) {
 }
 
 /** walk: it materialises mid-stride, walks on, stops, sits down and looks back over its shoulder. */
-function walk(box: CatBox): CatPhase {
+function walk(box: CatBox, style: Style): CatPhase {
   const { form, morph } = VARIANT.walk;
   const formed = CAT_AT + form;
   // Walk seconds already behind it when it materialises; a narrow frame has less room, so it is further in.
@@ -218,7 +283,7 @@ function walk(box: CatBox): CatPhase {
   };
   const at = (p: Pose, t: number) => {
     walkPose(p, clock(t));
-    return eyesOpen(t - 5.44);
+    return 1 - Math.exp(-((((((t - 5.44) % 4.3) + 4.3) % 4.3 - 3.2) / 0.09) ** 2));
   };
   // Fit the whole walk, from where it materialises to where it sits, in the frame.
   const times = [6.5, 7.3, 7.6, 7.9, 8.2, 8.5, 8.8];
@@ -234,16 +299,16 @@ function walk(box: CatBox): CatPhase {
   const sc = Math.min((box.h * 0.84) / 60, (box.w - 24) / (hi - lo));
   const ox = box.cx - ((lo + hi) / 2) * sc;
   const gy = box.cy + box.h * 0.42;
-  const cat = dotCat(sc, ox, gy, at, times);
+  const cat = dotCat(sc, ox, gy, at, times, style);
   const a = rising(cat(formed), form, gy);
   return {
-    frame: (t) => materialise(cat(t), a, t),
+    frame: (t) => classified(materialise(cat(t), a, t), box, t),
     under: (o, t, k) => ground(o, box, k * P(t, 6.5, 6.75), ox, gy, sc),
   };
 }
 
 /** pounce: it materialises crouched, watches the red marker dart about, wiggles, and jumps on it; the landing is the handle. */
-function pounce(box: CatBox): CatPhase {
+function pounce(box: CatBox, style: Style): CatPhase {
   const { wide } = box;
   const { form } = VARIANT.pounce;
   const formed = CAT_AT + form;
@@ -277,10 +342,10 @@ function pounce(box: CatBox): CatPhase {
     const [x, y] = dot(tl);
     pouncePose(p, tl, x, y, from);
     return 1;
-  }, [formed, 7.3, 7.9, 8.05, 8.15, 8.25, 8.35, 8.45, 8.55, 8.63]);
+  }, [formed, 7.3, 7.9, 8.05, 8.15, 8.25, 8.35, 8.45, 8.55, 8.63], style);
   const a = rising(cat(formed), form, gy);
   return {
-    frame: (t) => materialise(cat(t), a, t),
+    frame: (t) => classified(materialise(cat(t), a, t), box, t),
     under: (o, t, k) => ground(o, box, k * P(t, 6.5, 6.75), ox, gy, sc),
     over(o, t, k) {
       const tl = clock(t);
@@ -310,16 +375,16 @@ function pounce(box: CatBox): CatPhase {
   };
 }
 
-/** The cat phase of a variant, laid out in `box`. */
-export function catPhase(name: IntroName, box: CatBox): CatPhase {
+/** The cat phase of a variant, laid out in `box`, in a look (the site's, unless the gallery asks for another). */
+export function catPhase(name: IntroName, box: CatBox, style: Style = STYLES[LOOK]): CatPhase {
   switch (name) {
-    case 'sit':
-      return sit(box);
-    case 'walk':
-      return walk(box);
-    case 'silhouette':
-      return silhouette(box);
+    case 'nap':
+      return nap(box, style);
     case 'pounce':
-      return pounce(box);
+      return pounce(box, style);
+    case 'walk':
+      return walk(box, style);
+    case 'stretch':
+      return stretch(box, style);
   }
 }

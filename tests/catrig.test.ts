@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { BODY_PART, DUTY, HIDDEN, POUNCE, STRIDE, field, newPose, newShape, place, pouncePose, sitPose, skin, swarm, walkFoot, walkPose, type Swarm } from '../src/components/machine/catrig';
 import { DEFAULT_INTRO, INTROS, homeCut } from '../src/components/machine/scene';
 import { addedTime } from '../src/components/machine/catphase';
+import { STYLES } from '../src/components/machine/cat';
+import { ABOUT, ABOUT_KEYS, HERO, HERO_KEYS, keyed } from '../src/components/machine/catkeys';
 
 describe('the cat walks, it does not slide', () => {
   const feet = new Float32Array(16);
@@ -97,7 +99,7 @@ describe('the particles', () => {
       skin(p, sh);
       return sh;
     });
-    return [0, 1, 2].map(() => swarm(shapes, 0.45, 0.15));
+    return [0, 1, 2].map(() => swarm(shapes, STYLES.detail, 6, 0.15));
   };
   const at = (pose: (t: number) => void, t: number, w: Swarm) => {
     pose(t);
@@ -106,7 +108,7 @@ describe('the particles', () => {
   };
 
   it('keep their place on the body: over three frames close together, no particle jumps', () => {
-    // A particle re-sampled or swapped with another would jump about one spacing (0.45) between frames;
+    // A particle re-sampled or swapped with another would jump about one spacing (about 0.4) between frames;
     // one that follows its place moves smoothly, and its second difference all but vanishes.
     const dt = 1 / 3840;
     for (const [pose, from, to] of moves) {
@@ -124,7 +126,7 @@ describe('the particles', () => {
         fewest = Math.min(fewest, shown);
       }
       expect(worst).toBeLessThan(0.35);
-      expect(fewest).toBeGreaterThan(1500);
+      expect(fewest).toBeGreaterThan(1200);
     }
   });
 
@@ -140,13 +142,69 @@ describe('the particles', () => {
 });
 
 describe('the home cut', () => {
-  it('adds at most 0.7s for the default cat, at most 2.1s for any other, and runs forward', () => {
-    expect(homeCut(DEFAULT_INTRO).at(-1)![0] - 11.2).toBeLessThan(0.7);
+  it('adds at most 1.2s for the default cat, at most 2.1s for any other, and runs forward', () => {
+    expect(homeCut(DEFAULT_INTRO).at(-1)![0] - 11.2).toBeLessThan(1.2);
     for (const name of INTROS) {
       const cut = homeCut(name);
       expect(cut.at(-1)![0] - 11.2).toBeCloseTo(addedTime(name), 6);
       expect(addedTime(name)).toBeLessThan(2.1);
       for (let i = 1; i < cut.length; i++) expect(cut[i][0]).toBeGreaterThan(cut[i - 1][0]);
     }
+  });
+});
+
+describe('her day (keyed timelines)', () => {
+  const p = newPose();
+  const s = newShape();
+  const timelines = [
+    ['about', ABOUT_KEYS, ABOUT],
+    ['hero', HERO_KEYS, 0],
+  ] as const;
+  /** How far above the ground the lowest part of the shape is, around x. */
+  const gap = (x: number) => {
+    let low = Infinity;
+    for (let i = 0; i < s.discs.length; i += 3) if (Math.abs(s.discs[i] - x) < 2.5) low = Math.min(low, s.discs[i + 1] - s.discs[i + 2]);
+    return low;
+  };
+
+  it('is a shape at every moment, never goes through the floor, and stands on its planted feet', () => {
+    const bad: string[] = [];
+    for (const [name, keys, loop] of timelines) {
+      const end = loop || HERO;
+      for (let t = 0; t < end; t += 0.02) {
+        keyed(p, keys, t, loop);
+        skin(p, s);
+        if (!s.discs.every(Number.isFinite) || !s.polys.every((q) => q.every(Number.isFinite))) bad.push(`${name} ${t}: not finite`);
+        for (let i = 0; i < s.discs.length; i += 3) if (s.discs[i + 1] - s.discs[i + 2] < -1e-6) bad.push(`${name} ${t}: through the floor`);
+        for (let leg = 0; leg < 4; leg++) if (p.feet[leg * 4 + 1] === 0 && gap(p.feet[leg * 4]) >= 0.35) bad.push(`${name} ${t.toFixed(2)}: foot ${leg} floats ${gap(p.feet[leg * 4]).toFixed(2)}`);
+      }
+    }
+    expect(bad.slice(0, 8)).toEqual([]);
+  });
+
+  it('a foot on the ground does not slide: it stays put or lifts to step', () => {
+    for (const [, keys, loop] of timelines) {
+      const end = loop || HERO;
+      const was = new Float32Array(16);
+      keyed(p, keys, 0, loop);
+      was.set(p.feet);
+      for (let t = 0.01; t < end; t += 0.01) {
+        keyed(p, keys, t, loop);
+        for (let leg = 0; leg < 4; leg++) {
+          const o = leg * 4;
+          // Down now and down a moment ago: it has not moved more than a hair.
+          if (p.feet[o + 1] < 0.02 && was[o + 1] < 0.02) expect(Math.abs(p.feet[o] - was[o])).toBeLessThan(0.15);
+        }
+        was.set(p.feet);
+      }
+    }
+  });
+
+  it('loops without a seam: the about loop ends where it starts', () => {
+    const a = newPose();
+    keyed(p, ABOUT_KEYS, ABOUT - 1e-4, ABOUT);
+    keyed(a, ABOUT_KEYS, 0, ABOUT);
+    expect(Math.abs(p.hx - a.hx) + Math.abs(p.sy - a.sy) + Math.abs(p.headX - a.headX) + Math.abs(p.headY - a.headY)).toBeLessThan(0.05);
+    for (let i = 0; i < 16; i++) expect(p.feet[i]).toBeCloseTo(a.feet[i], 2);
   });
 });

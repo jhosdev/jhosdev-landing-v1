@@ -70,6 +70,8 @@ interface MachineVoice {
   offDuty: string;
   knownFacts: string;
   feline: string;
+  /** What the cat is doing, as the Machine logs it in the about section's frame (catkeys.ts ABOUT_LOG points into it). */
+  catLog: string[];
   /** The play page's title. */
   simulation: string;
   /** The word on the home's invitation to it. */
@@ -186,6 +188,7 @@ const MACHINE: MachineVoice = {
   offDuty: 'Off duty',
   knownFacts: 'Known facts',
   feline: 'Feline',
+  catLog: ['Asleep', 'Waking', 'Yawning', 'Stretching', 'On watch · by the file', 'Slow blink · trust', 'Settling in'],
   simulation: 'Simulation',
   play: 'Play',
   self: 'the Machine',

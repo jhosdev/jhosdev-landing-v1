@@ -5,6 +5,7 @@ import TopBar from '../../components/TopBar.astro';
 import BootScene from '../../components/BootScene.astro';
 import { getContent } from '../../data/content';
 import { INTROS, DEFAULT_INTRO, addedTime } from '../../components/machine/catphase';
+import { LOOK, STYLES } from '../../components/machine/cat';
 
 const content = getContent('en');
 const label = content.promptUser;
@@ -15,11 +16,22 @@ const experiments = [
   { href: '/lab/tictactoe/', name: 'tictactoe/', note: 'play minimax and watch it think' },
 ];
 const NOTES: Record<(typeof INTROS)[number], string> = {
-  sit: 'dots of the panel rise into a sitting cat; it looks back over its shoulder, flicks its tail, blinks',
+  nap: 'she materialises asleep in a loaf; the scan classifies her coat, an ear twitches as the line passes, she lifts her head and gives you a slow blink',
+  pounce: 'it materialises crouched, stalks the red marker, wiggles, leaps and lands on it',
   walk: 'it materialises mid-stride, walks on, stops, lowers itself into a sit, looks back with a nod',
-  silhouette: 'the panel traces its outline dot by dot, then the scan line fills it in',
-  pounce: 'it materialises crouched, stalks the red marker, wiggles, leaps and lands on it'
+  stretch: 'she materialises lying awake, yawns at the scanner, then gets up into a long front stretch, tail high',
 };
+// The looks, side by side on the same pounce: the site's look is LOOK (cat.ts); the sparse one at three counts.
+const LOOKS: { name: keyof typeof STYLES; count?: number; note: string }[] = [
+  { name: 'sparse', count: 800, note: 'sparse, fewer: a constellation' },
+  { name: 'sparse', note: 'sparse: few particles, gathered at the outline, a scatter of big bright ones' },
+  { name: 'sparse', count: 1900, note: 'sparse, more: the shape firmer, still airy' },
+  { name: 'varied', note: 'from specks to large drops' },
+  { name: 'cloud', note: 'a dense cloud of fine particles' },
+  { name: 'detail', note: 'fine, even and clean: a strong outline, no strays' },
+  { name: 'soft', note: 'very many faint specks, a frayed edge' },
+  { name: 'motion', note: 'sparse, and every moving particle streaks back to where it was a moment ago' },
+];
 ---
 
 <BaseLayout locale="en" title="lab — motion" description="Motion experiments.">
@@ -39,7 +51,7 @@ const NOTES: Record<(typeof INTROS)[number], string> = {
       </div>
     </section>
     <section>
-      <p class="prompt">$ ls intro/ <span class="comment"># intro variants, each looping its cat phase from the panel of dots, all particles; the link replays the home intro with it</span></p>
+      <p class="prompt">$ ls intro/ <span class="comment"># intro variants, each looping its cat phase from the panel of dots: grey until the scan classifies her; the link replays the home intro with it</span></p>
       <div class="cats">
         {
           INTROS.map((name) => (
@@ -62,10 +74,38 @@ const NOTES: Record<(typeof INTROS)[number], string> = {
           <canvas data-cat="about" aria-hidden="true" />
           <figcaption>
             <span class="cat-name">about</span>
-            <span class="cat-note">the about section: a sphere of particles resolves into the sitting cat, which idles as particles</span>
-            <span class="cat-meta">not part of the intro · <a href="/#about">open the section →</a></span>
+            <span class="cat-note">the personal file, a 20s loop: asleep; she wakes, yawns, stretches, sits by the file and looks back at it, turns to you with a slow blink, lies down and sleeps again</span>
+            <span class="cat-meta">not part of the intro · <a href="/#about">open the section →</a> · freeze it with <code>?luna=14.8</code></span>
           </figcaption>
         </figure>
+        <figure class="cat-tile">
+          <canvas data-cat="hero" aria-hidden="true" />
+          <figcaption>
+            <span class="cat-name">luna / cat</span>
+            <span class="cat-note">the command: she forms over the hero looking back, turns to you, yawns, gives you a slow blink, and goes</span>
+            <span class="cat-meta">not part of the intro · type her name at the prompt · freeze it with <code>?cat=3</code></span>
+          </figcaption>
+        </figure>
+      </div>
+    </section>
+    <section>
+      <p class="prompt">$ ls looks/ <span class="comment"># the same pounce in every look; the site uses {LOOK} (one word in cat.ts)</span></p>
+      <div class="cats">
+        {
+          LOOKS.map((look) => (
+            <figure class="cat-tile">
+              <canvas data-look={look.name} data-count={look.count ?? STYLES[look.name].count} aria-hidden="true" />
+              <figcaption>
+                <span class="cat-name">
+                  {look.name} · {look.count ?? STYLES[look.name].count} particles
+                  {look.name === LOOK && !look.count && <span class="cat-meta"> in use</span>}
+                </span>
+                <span class="cat-note">{look.note}</span>
+                <span class="cat-meta" data-drawn>counted for a full-size cat; this tile draws fewer</span>
+              </figcaption>
+            </figure>
+          ))
+        }
       </div>
     </section>
     <section>
@@ -113,31 +153,34 @@ const NOTES: Record<(typeof INTROS)[number], string> = {
 </style>
 
 <script>
-  // Each tile loops its variant's cat phase, drawn by the same code the intro uses (catphase.ts):
-  // from the quiet panel of dots to the moment it starts resolving into the handle, a short hold, again, in the home's time.
-  import { VARIANT, along, catCut, catPhase, introName, type CatPhase } from '../../components/machine/catphase';
-  import { buildCat, drawCat, drawDots, type Cat } from '../../components/machine/cat';
-  import { BG, BORDER, E, P, rgb } from '../../components/machine/draw';
+  // Each tile loops a cat, drawn by the same code the site uses. Intro tiles: the variant's cat phase (catphase.ts) from
+  // the quiet panel of dots to the moment it starts resolving into the handle, with the scan line that classifies her,
+  // in the home's time, a short hold, again. Look tiles: the pounce in each look. The about and hero tiles: their timelines.
+  import { SCAN, VARIANT, along, catCut, catPhase, introName, type CatPhase } from '../../components/machine/catphase';
+  import { STYLES, buildLuna, drawFrame, drawLuna, type Luna, type StyleName } from '../../components/machine/cat';
+  import { ABOUT, ABOUT_KEYS, HERO, HERO_KEYS } from '../../components/machine/catkeys';
+  import { AMBER, BG, BORDER, E, P, rgb } from '../../components/machine/draw';
 
   const HOLD = 0.7;
-  const ABOUT = 10;
   const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
   interface Tile {
     cv: HTMLCanvasElement;
     ctx: CanvasRenderingContext2D;
     name: string;
+    look?: StyleName;
+    count: number;
     seen: boolean;
     W: number;
     H: number;
     phase?: CatPhase;
-    cat?: Cat;
+    cat?: Luna;
   }
 
   const tiles: Tile[] = [];
-  for (const cv of document.querySelectorAll<HTMLCanvasElement>('canvas[data-cat]')) {
+  for (const cv of document.querySelectorAll<HTMLCanvasElement>('canvas[data-cat], canvas[data-look]')) {
     const ctx = cv.getContext('2d');
-    if (ctx) tiles.push({ cv, ctx, name: cv.dataset.cat ?? '', seen: false, W: 1, H: 1 });
+    if (ctx) tiles.push({ cv, ctx, name: cv.dataset.cat ?? 'pounce', look: cv.dataset.look as StyleName | undefined, count: Number(cv.dataset.count) || 0, seen: false, W: 1, H: 1 });
   }
 
   function fit(tile: Tile) {
@@ -148,8 +191,14 @@ const NOTES: Record<(typeof INTROS)[number], string> = {
     tile.cv.height = Math.round(tile.H * dpr);
     tile.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     const { W, H } = tile;
-    if (tile.name === 'about') tile.cat = buildCat(Math.min(W, H) * 0.9);
-    else tile.phase = catPhase(introName(tile.name), { cx: W / 2, cy: H / 2, w: W * 0.86, h: H * 0.74, wide: W / H > 1.4 });
+    if (tile.name === 'about') tile.cat = buildLuna(ABOUT_KEYS, ABOUT, W, H);
+    else if (tile.name === 'hero') tile.cat = buildLuna(HERO_KEYS, 0, W * 0.8, H, 0, HERO);
+    else {
+      const style = tile.look ? { ...STYLES[tile.look], count: tile.count } : undefined;
+      tile.phase = catPhase(introName(tile.name), { cx: W / 2, cy: H / 2, w: W * 0.86, h: H * 0.74, wide: W / H > 1.4 }, style);
+      const drawn = tile.cv.parentElement?.querySelector<HTMLElement>('[data-drawn]');
+      if (drawn) drawn.textContent = `counted for a full-size cat; this tile draws ${tile.phase.frame(VARIANT.pounce.morph).n}`;
+    }
   }
 
   /** One frame of a tile, `s` seconds into its loop. */
@@ -160,11 +209,18 @@ const NOTES: Record<(typeof INTROS)[number], string> = {
     // The Machine's dot grid, as the intro paints it: the cat is made of its dots.
     ctx.fillStyle = rgb(BORDER, 0.8);
     for (let y = 14; y < H; y += 28) for (let x = 14; x < W; x += 28) ctx.fillRect(x - 1, y - 1, 2, 2);
+    if (tile.cat && tile.name === 'about') {
+      drawLuna(ctx, tile.cat, still ? 2 : s % ABOUT, s, 1, 1);
+      return;
+    }
     if (tile.cat) {
-      const size = tile.cat.size;
-      const t = s % ABOUT;
-      const grow = still ? 1 : P(t, 0.2, 0.8) * (1 - P(t, ABOUT - 0.4, ABOUT));
-      drawCat(ctx, tile.cat, (W - size) / 2, (H - size) / 2, t, grow, still ? 1 : E.inOutCubic(P(t, 0.8, 2.2)), still);
+      // The hero: she forms, does her few seconds, and goes, then a beat of nothing.
+      const local = still ? HERO / 2 : s % (HERO + 1);
+      const out = HERO - 1.7;
+      ctx.save();
+      ctx.translate(W * 0.1, 0);
+      drawLuna(ctx, tile.cat, local, s, P(local, 0, 0.5) * (1 - P(local, HERO - 0.5, HERO)), E.inOutCubic(P(local, 0.4, 1.8)) * (1 - P(local, out, HERO - 0.4)));
+      ctx.restore();
       return;
     }
     if (!tile.phase) return;
@@ -174,9 +230,21 @@ const NOTES: Record<(typeof INTROS)[number], string> = {
     const len = cut[cut.length - 1][0];
     const t = still ? VARIANT[name].morph : along(cut, Math.min(s % (len + HOLD), len));
     tile.phase.under?.(ctx, t, 1);
-    const cat = tile.phase.frame(t);
-    drawDots(ctx, cat.x, cat.y, cat.tone, cat.n);
+    drawFrame(ctx, tile.phase.frame, t, tile.look ? STYLES[tile.look].trail : undefined);
     tile.phase.over?.(ctx, t, 1);
+    // The scan line's first pass, as the intro draws it: it classifies her.
+    const k = P(t, SCAN[0], SCAN[1]);
+    if (k > 0 && k < 1) {
+      const top = H / 2 - H * 0.37;
+      const y = top + k * H * 0.74;
+      const g = ctx.createLinearGradient(0, y - 30, 0, y);
+      g.addColorStop(0, rgb(AMBER, 0));
+      g.addColorStop(1, rgb(AMBER, 0.1));
+      ctx.fillStyle = g;
+      ctx.fillRect(W * 0.07, Math.max(top, y - 30), W * 0.86, Math.min(30, y - top));
+      ctx.fillStyle = rgb(AMBER, 0.75);
+      ctx.fillRect(W * 0.07, y, W * 0.86, 1);
+    }
   }
 
   const io = new IntersectionObserver((entries) => {
