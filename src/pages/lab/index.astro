@@ -31,6 +31,7 @@ const LOOKS: { name: keyof typeof STYLES; count?: number; note: string }[] = [
   { name: 'detail', note: 'fine, even and clean: a strong outline, no strays' },
   { name: 'soft', note: 'very many faint specks, a frayed edge' },
   { name: 'motion', note: 'sparse, and every moving particle streaks back to where it was a moment ago' },
+  { name: 'haze', note: 'cloud and soft at once: a dense core of fine particles carries the form, a veil of faint specks frays its edge' },
 ];
 ---
 
@@ -98,6 +99,7 @@ const LOOKS: { name: keyof typeof STYLES; count?: number; note: string }[] = [
               <figcaption>
                 <span class="cat-name">
                   {look.name} · {look.count ?? STYLES[look.name].count} particles
+                  {(() => { const veil = (STYLES[look.name] as { veil?: number }).veil; return veil ? ` + ${veil} faint` : ''; })()}
                   {look.name === LOOK && !look.count && <span class="cat-meta"> in use</span>}
                 </span>
                 <span class="cat-note">{look.note}</span>

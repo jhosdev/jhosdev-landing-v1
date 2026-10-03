@@ -28,7 +28,7 @@ const META = 7;
 const HPAW = 2.7;
 export const TAIL = 7;
 /** The head's size against its outlines. */
-const HEAD_K = 1.2;
+const HEAD_K = 1.3;
 const TAIL_SEG = 5.6;
 /** Height of the spine at the hips and shoulders when it stands. */
 const BACK = 26;
@@ -253,7 +253,7 @@ export function head(s: Shape, x: number, y: number, pitch: number, yaw: number,
       q[3] = by + dx * Math.sin(tw) + dy * Math.cos(tw) - 0.12 * Math.abs(tw) * 6;
     }
     const ear: number[] = [];
-    // Two sides, each bowed a little outward; the tip stays sharp.
+    // Two sides, each bowed a little outward, and a softly rounded tip between them.
     for (const [a, b, bow] of [
       [0, 2, 0.5],
       [2, 4, 0.35],
@@ -261,7 +261,8 @@ export function head(s: Shape, x: number, y: number, pitch: number, yaw: number,
       const nx = -(q[b + 1] - q[a + 1]);
       const ny = q[b] - q[a];
       const d = Math.hypot(nx, ny) || 1;
-      for (let j = 0; j < 6; j++) {
+      if (a === 2) put(ear, lerp(q[2], (q[0] + q[4]) / 2, 0.08), lerp(q[3], (q[1] + q[5]) / 2, 0.08));
+      for (let j = a === 2 ? 1 : 0; j < 6; j++) {
         const u = j / 6;
         const w = 4 * u * (1 - u) * bow;
         put(ear, lerp(q[a], q[b], u) + (nx / d) * w, lerp(q[a + 1], q[b + 1], u) + (ny / d) * w);
@@ -279,7 +280,7 @@ export function head(s: Shape, x: number, y: number, pitch: number, yaw: number,
     const ex = lat * 2.35 * depth * flip + 3.1 * side;
     const o: number[] = [];
     put(o, ex, lerp(0.35, 1.05, side));
-    s.eyes.push(o[0], o[1], k * seen * lerp(1.4, 1.0, side), lerp(1.0, 0.62, side) * k, pitch * yaw + roll + flip * lerp(lat * -0.2, 0.3, side), lat);
+    s.eyes.push(o[0], o[1], k * seen * lerp(1.4, 1.0, side), lerp(1.0, 0.62, side) * k, pitch * yaw + roll + flip * lerp(lat * -0.05, 0.3, side), lat);
   }
 }
 
@@ -706,7 +707,8 @@ export function field(s: Shape, g: number): Field {
     box[1] = ny;
     box[2] = 0;
     box[3] = 0;
-    // The sweeps are dense: a disc that barely moves on from the last one used adds nothing a pixel would show.
+    // The sweeps are dense: a disc close to the last one used adds nothing a pixel would show. Two discs of radius r a
+    // distance s apart leave a notch about s^2 / 8r deep between them: kept under a quarter of a grid step.
     let lx = Infinity;
     let ly = 0;
     let lr = 0;
@@ -714,7 +716,7 @@ export function field(s: Shape, g: number): Field {
       const cx = d[i];
       const cy = d[i + 1];
       const r = d[i + 2];
-      if (i + 3 < b && Math.hypot(cx - lx, cy - ly) + Math.abs(r - lr) < 0.5 * g) continue;
+      if (i + 3 < b && Math.abs(r - lr) < 0.25 * g && Math.hypot(cx - lx, cy - ly) < Math.sqrt(2 * Math.min(r, lr) * g)) continue;
       lx = cx;
       ly = cy;
       lr = r;
@@ -804,7 +806,7 @@ export function field(s: Shape, g: number): Field {
 //     fraction of its half width there (a few strays sit just outside, dim, so the edge is never a drawn line);
 //   - the skull and the ears (closed outlines): an angle about the middle and a fraction of the way to the outline;
 //     the skull's are laid out on the face seen from the front, so the face keeps its weave as the head turns;
-//   - the eyes: a ring of dots on each, which closes into the curve of a shut eye.
+//   - the eyes: lines of dots, a dark lid over a sliver of green, which close into a short pale curve.
 // Each also has a size and a brightness, from skewed draws: mostly small and dim, a few large and bright. A part in
 // front hides the particles of the parts behind it (the body hides the legs and the tail, the near legs hide the far
 // ones and the tail, the skull hides the body, the near ear the far one); where a near leg crosses the body its
@@ -814,6 +816,7 @@ export function field(s: Shape, g: number): Field {
 const SWEPT = 0;
 const POLAR = 1;
 const EYE_DOT = 2;
+const VEIL = 3;
 /** Tones 0 to 6 are the Machine's grey ramp (5 the brightest) and the asset's cyan; cat.ts draws them. HIDDEN is not drawn. */
 export const HIDDEN = 255;
 export const LIT = 5;
@@ -856,6 +859,9 @@ export interface Style {
   even: number;
   /** Seconds a streak reaches back behind a moving particle (0: none). */
   trail: number;
+  /** A veil of very faint specks on top (count at 6 px per rig unit, like `count`), and how far they stray from the particles they ride on (in spacings). */
+  veil?: number;
+  fray?: number;
 }
 
 export interface Swarm {
@@ -871,9 +877,12 @@ export interface Swarm {
   edge: Uint8Array;
   /** Its markings on a leg, the body or the tail (a tone); the head's are found every frame. */
   coat: Uint8Array;
-  /** Its dot (px) and its brightness step (0 full, 1 middle, 2 dim). */
+  /** Its dot (px) and its brightness step (0 full, 1 middle, 2 dim, 3 a veil speck). */
   size: Float32Array;
   level: Uint8Array;
+  /** Particles before the veil; each veil speck's particle (index from `core` on); for a speck, a and b are its offset (rig units). */
+  core: number;
+  up: Int32Array;
   /** Rig units: the mean spacing it was laid out with, and half a dot. */
   d: number;
   inset: number;
@@ -946,6 +955,8 @@ function seek(c: Float32Array, from: number, end: number, v: number) {
 // around it to each vertex, and how far it reaches from the centre in each direction.
 const BINS = 64;
 const CEN = [0, 0, 0, 0, 0, 0, 0, 0];
+/** How far each outline reaches at most, to rule a point out cheaply. */
+const FAR = [0, 0, 0, 0];
 const RAD = [new Float32Array(BINS), new Float32Array(BINS), new Float32Array(BINS), new Float32Array(BINS)];
 
 function outline(q: number[], j: number) {
@@ -975,6 +986,7 @@ function outline(q: number[], j: number) {
     }
   }
   for (let i = 0; i < BINS; i++) if (!R[i]) R[i] = Math.max(R[(i + 1) % BINS], R[(i + BINS - 1) % BINS]);
+  FAR[j] = Math.max(...R);
 }
 
 /** How far outline j reaches from its centre at angle `ang`. */
@@ -990,6 +1002,14 @@ function within(j: number, x: number, y: number, m: number) {
   const dx = x - CEN[j * 2];
   const dy = y - CEN[j * 2 + 1];
   return Math.hypot(dx, dy) < reach(j, Math.atan2(dy, dx)) + m;
+}
+
+/** Whether (x, y) is less than the fraction k of the way from outline j's centre to the outline. */
+function inside(j: number, x: number, y: number, k: number) {
+  const dx = x - CEN[j * 2];
+  const dy = y - CEN[j * 2 + 1];
+  if (dx * dx + dy * dy > (k * FAR[j]) ** 2) return false;
+  return Math.hypot(dx, dy) < k * reach(j, Math.atan2(dy, dx));
 }
 
 /** The field at (x, y), between its nodes. Far from the shape it is large. */
@@ -1015,7 +1035,10 @@ const frac = (x: number) => x - Math.floor(x);
 function coatOf(p: number, s: number, n: number) {
   if (p === BODY_I) {
     // The body's sweep runs rump (0), shoulders (about 0.6), neck, up to the skull.
-    if (s > 0.6 && n < 0.05) return CREAM;
+    // A small pale bib at the throat; below it the chest is ginger, crossed by a tabby's necklaces.
+    if (s > 0.86 && n < -0.45) return CREAM;
+    if (s > 0.78 && n < -0.2) return CREAM_DIM;
+    if (s > 0.6 && n < 0.05) return frac(s * 13 + 0.2) < 0.26 ? STRIPE : GINGER;
     if (n < -0.55) return GINGER;
     if (s < 0.64 && n > 0.6 && n < 0.9) return STRIPE;
     if (s > 0.06 && s < 0.6 && n > -0.38 && frac(s * 11 + 0.35 * n * n) < 0.34) return STRIPE;
@@ -1040,8 +1063,9 @@ function area(q: number[]) {
   return Math.abs(a) / 2;
 }
 
-/** Dots per eye, on its ring. */
+/** Dots per eye: along the lid, then the sliver of green under it. */
 const EYE_DOTS = 9;
+const IRIS_DOTS = 7;
 
 /**
  * The particles for a cat in the look `style`, drawn at `sc` px per rig unit, that will take the given shapes (the
@@ -1111,11 +1135,12 @@ export function swarm(shapes: Shape[], style: Style, sc: number, inset = 1 / sc,
     const cum: number[] = [0];
     if (swept) for (let i = PF[p] + 1; i < PE[p]; i++) cum.push(cum[cum.length - 1] + (D[i * 3 + 2] + D[i * 3 - 1]) * (CUM[i] - CUM[i - 1]));
     let got = 0;
-    for (let tries = want * 60; tries > 0 && got < want; tries--) {
-      let a: number;
-      let b: number;
-      let x: number;
-      let y: number;
+    let a = 0;
+    let b = 0;
+    let x = 0;
+    let y = 0;
+    /** A place on the part, by chance (in proportion to area): sets a, b, x, y. */
+    const pick = () => {
       if (swept) {
         const v = rnd() * cum[cum.length - 1];
         let lo = 0;
@@ -1141,6 +1166,9 @@ export function swarm(shapes: Shape[], style: Style, sc: number, inset = 1 / sc,
           a = Math.atan2(Math.sin(a - Math.atan2(hs, hc)), Math.cos(a - Math.atan2(hs, hc)) * flip);
         }
       }
+    };
+    for (let tries = want * 60; tries > 0 && got < want; tries--) {
+      pick();
       const w = density(Math.abs(b));
       if (rnd() * style.edge > w) continue;
       const near = (spacing * style.even * 0.72) / Math.sqrt(w / mean);
@@ -1169,11 +1197,40 @@ export function swarm(shapes: Shape[], style: Style, sc: number, inset = 1 / sc,
       if (stray) b = Math.sign(b) * (1.06 + 0.3 * rnd());
       add(swept ? SWEPT : POLAR, p, a, b, Math.abs(b) > 0.8 ? 1 : 0, stray);
       if (swept) Co[Co.length - 1] = coatOf(p, a, cl(b, -1, 1));
+      // Under a veil the outline is lit a step brighter, so the form holds through the haze.
+      if (style.veil && !stray && Math.abs(b) > 0.86) Lv[Lv.length - 1] = Math.min(Lv[Lv.length - 1], 1);
     }
   }
-  for (const lat of [-1, 1]) for (let j = 0; j < EYE_DOTS; j++) add(EYE_DOT, SKULL, (j / EYE_DOTS) * 2 * Math.PI, lat, 0, false);
+  for (const lat of [-1, 1]) {
+    for (let j = 0; j < EYE_DOTS; j++) add(EYE_DOT, SKULL, (j / EYE_DOTS) * 2 * Math.PI, lat, 0, false);
+    for (let j = 0; j < IRIS_DOTS; j++) add(EYE_DOT, SKULL, 10 + j, lat, 0, false);
+  }
+  const core = K.length;
+  for (let i = core - 2 * (EYE_DOTS + IRIS_DOTS); i < core; i++) Sz[i] = Math.max(Sz[i], 1.5 * grow);
+  // The veil: very faint specks, each riding on a particle of the coat a little way off it (rig units), so it costs next
+  // to nothing to place. Round the outline half of them fall outside it: the edge frays. Not on the face (it stays clear).
+  const Up: number[] = [];
+  const spacing = Math.sqrt(sum / total);
+  for (let v = Math.round(((style.veil ?? 0) * total) / style.count); v > 0; v--) {
+    let i = 0;
+    for (let k = 0; k < 8; k++) {
+      i = Math.floor(rnd() * core);
+      if (K[i] !== EYE_DOT && !(Pt[i] === SKULL && Bv[i] < 0.85)) break;
+    }
+    if (K[i] === EYE_DOT || (Pt[i] === SKULL && Bv[i] < 0.85)) continue;
+    const r = spacing * (0.35 + (style.fray ?? 2) * Math.pow(rnd(), 1.6));
+    const an = rnd() * 2 * Math.PI;
+    K.push(VEIL);
+    Pt.push(Pt[i]);
+    A.push(Math.cos(an) * r);
+    Bv.push(Math.sin(an) * r);
+    Ed.push(0);
+    Co.push(0);
+    Sz.push((0.7 + 0.5 * rnd()) * grow);
+    Lv.push(3);
+    Up.push(i);
+  }
   const n = K.length;
-  for (let i = n - 2 * EYE_DOTS; i < n; i++) Sz[i] = Math.max(Sz[i], 1.5 * grow);
   return {
     n,
     kind: Uint8Array.from(K),
@@ -1186,6 +1243,8 @@ export function swarm(shapes: Shape[], style: Style, sc: number, inset = 1 / sc,
     level: Uint8Array.from(Lv),
     d: Math.sqrt(sum / total),
     inset,
+    core,
+    up: Int32Array.from(Up),
     x: new Float32Array(n),
     y: new Float32Array(n),
     tone: new Uint8Array(n),
@@ -1208,6 +1267,9 @@ const MARKS = [
   3.0, -1.3, 4.7, -2.2, 1.9, -0.6, -1.3, -1.5, 0.26,
 ];
 
+const MK = new Float32Array((MARKS.length / 9) * 5);
+let MK_SIDE = NaN;
+
 /** Distance from (x, y) to the segment (ax, ay)-(bx, by). */
 function toSegment(x: number, y: number, ax: number, ay: number, bx: number, by: number) {
   const vx = bx - ax;
@@ -1219,30 +1281,67 @@ function toSegment(x: number, y: number, ax: number, ay: number, bx: number, by:
 /** Whether (x, y) is inside the ellipse at (cx, cy) with radii (rx, ry). */
 const inOval = (x: number, y: number, cx: number, cy: number, rx: number, ry: number) => ((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2 < 1;
 
-/** Where an eye's dot at angle `ang` sits in the eye's own frame (u across, v up, in eye radii), for eyes `open` (0..1). */
-function eyeDot(ang: number, open: number) {
-  const u = 0.95 * Math.cos(ang);
-  // Shut, the ring folds down into the curve of the lower lid.
-  const shut = -0.12 - 0.42 * Math.sqrt(Math.max(0, 1 - u * u));
-  const e = open * open * (3 - 2 * open);
-  return [u, lerp(shut, 0.95 * Math.sin(ang), e)];
+/** A shut eye: the curve of the lower lid (eye radii). */
+const shutLid = (u: number) => -0.12 - 0.42 * Math.sqrt(Math.max(0, 1 - u * u));
+/** The upper lid, `e` open (eased): from the shut curve up to an almond's top. */
+const upperLid = (u: number, e: number) => lerp(shutLid(u), 0.62 * Math.pow(Math.max(0, 1 - u * u), 0.75) - 0.08, e);
+const ease = (x: number) => x * x * (3 - 2 * x);
+const EYE_OUT: [number, number, number, number] = [0, 0, 0, 0];
+
+/**
+ * Her eyes are lines, the way she looks up from a blanket: open, a dark upper lid with a sliver of green under it; shut,
+ * a short pale curve. Where eye dot `a` sits in the eye's own frame (u across, v up, in eye radii), its tone and
+ * brightness, for eyes `open` (0..1); null when it is not drawn. `a` < 7 is a lid dot (an angle round the eye: its place
+ * along the lid), `a` >= 10 an iris dot.
+ */
+function eyeDot(a: number, open: number): [number, number, number, number] | null {
+  const e = ease(open);
+  const o = EYE_OUT;
+  if (a < 10) {
+    const k = Math.round((a / (2 * Math.PI)) * EYE_DOTS);
+    const u = (-0.95 + (1.9 * k) / (EYE_DOTS - 1)) * (e < 0.25 ? 0.85 : 1);
+    o[0] = u;
+    o[1] = upperLid(u, e);
+    o[2] = e < 0.25 ? CREAM_DIM : DEEP;
+    o[3] = 0;
+    return o;
+  }
+  if (e < 0.25) return null;
+  const k = a - 10;
+  const u = -0.62 + (1.24 * k) / (IRIS_DOTS - 1);
+  o[0] = u;
+  o[1] = lerp(shutLid(u), upperLid(u, e), 0.45);
+  o[2] = EYE;
+  o[3] = k === 3 ? 0 : 1;
+  return o;
+}
+
+/** Whether a point of the face (eye radii from the eye's centre) is the eye's own gap, round the lid: there the coat is not drawn. */
+function eyeGap(eu: number, ev: number, open: number) {
+  if (Math.abs(eu) > 1.12) return false;
+  const e = ease(open);
+  const m = e < 0.25 ? 0.4 : 0.2;
+  return ev > shutLid(eu) - m && ev < upperLid(eu, e) + m;
 }
 
 /**
- * The tone of the skull at (x, y) (rig units), for eyes `open` (0..1), or HIDDEN where the face is a gap: inside an
- * open eye (its ring of dots is the eye), along a shut eye's lid, the nose, an open mouth. Around them: a cream muzzle
- * and chin, the stripes on the forehead and cheeks, a ginger face under a darker crown.
+ * The tone of the skull at (x, y) (rig units), for eyes `open` (0..1), or HIDDEN where the face is a gap: round an
+ * eye's lid, an open mouth. The nose is dark; around it pale whisker pads and a paler chin, the M on the forehead and
+ * the lines on the cheeks (dim: a dark mark reads by being dim), a ginger face under a darker crown.
  */
 function face(s: Shape, x: number, y: number, open: number) {
   const E = s.eyes;
   for (let e = 0; e < E.length; e += 6) {
     const dx = x - E[e];
     const dy = y - E[e + 1];
+    // Far from the eye (most of the face): nothing to work out.
+    const far = 1.15 * Math.max(E[e + 2], E[e + 3]);
+    if (dx * dx + dy * dy > far * far) continue;
     const c = Math.cos(E[e + 4]);
     const sn = Math.sin(E[e + 4]);
     const eu = (dx * c + dy * sn) / E[e + 2];
     const ev = (-dx * sn + dy * c) / E[e + 3];
-    if (open > 0.3 ? eu * eu + ev * ev < 1.35 : Math.abs(eu) < 1.1 && Math.abs(ev + 0.12 + 0.42 * Math.sqrt(Math.max(0, 1 - eu * eu))) < 0.4) return HIDDEN;
+    if (eyeGap(eu, ev, open)) return HIDDEN;
   }
   const [hx, hy, c, sn, k, flip, side, mouth] = s.head;
   const dx = (x - hx) / k;
@@ -1251,7 +1350,8 @@ function face(s: Shape, x: number, y: number, open: number) {
   const ly = -dx * sn + dy * c;
   const L = (a: number, b: number) => a + (b - a) * side;
   const ny = L(-0.75, -0.1);
-  if (inOval(lx, ly, L(0, 6.0), ny, L(0.85, 0.5), L(0.6, 0.45)) && ly < ny + 0.3 && Math.abs(lx - L(0, 6.0)) < 0.9 + (ly - ny) * 1.2) return HIDDEN;
+  // The nose: a small dark triangle, point down.
+  if (inOval(lx, ly, L(0, 6.0), ny, L(1.05, 0.55), L(0.75, 0.5)) && ly < ny + 0.35 && Math.abs(lx - L(0, 6.0)) < 1.05 + (ly - ny) * 1.3) return DEEP;
   if (mouth > 0.05) {
     if (side < 0.5) {
       const cy = -2.1 - 0.85 * mouth;
@@ -1270,15 +1370,21 @@ function face(s: Shape, x: number, y: number, open: number) {
   } else if (side < 0.5 ? Math.abs(lx) < 0.17 && ly < -1.3 && ly > -2.05 : toSegment(lx, ly, 5.6, -1.75, 3.9, -2.15) < 0.17) {
     return STRIPE;
   }
-  if (inOval(lx, ly, L(0, 4.6), L(-2.1, -1.5), L(1.95, 1.9), L(1.25, 1.2)) || ly < L(-3.5, -2.8)) return CREAM;
-  for (let m = 0; m < MARKS.length; m += 9) {
-    if (toSegment(lx, ly, L(MARKS[m], MARKS[m + 4]), L(MARKS[m + 1], MARKS[m + 5]), L(MARKS[m + 2], MARKS[m + 6]), L(MARKS[m + 3], MARKS[m + 7])) < MARKS[m + 8]) return STRIPE;
+  // The muzzle: two pale whisker pads either side under the nose (one in profile), a paler chin under them.
+  // (pale toward their lower edge, softer toward the nose, so they never read as a mask).
+  if (inOval(lx, ly, L(-0.95, 4.7), L(-2.2, -1.6), L(1.15, 1.5), L(0.85, 1.0)) || inOval(lx, ly, L(0.95, 4.7), L(-2.2, -1.6), L(1.15, 1.5), L(0.85, 1.0))) return ly < L(-2.15, -1.6) ? CREAM : CREAM_DIM;
+  if (ly < L(-3.2, -2.8) && Math.abs(lx - L(0, 4)) < L(1.7, 3)) return CREAM_DIM;
+  if (MK_SIDE !== side) {
+    // The marks for this turn of the head, worked out once per frame.
+    MK_SIDE = side;
+    for (let m = 0, o = 0; m < MARKS.length; m += 9, o += 5) MK.set([L(MARKS[m], MARKS[m + 4]), L(MARKS[m + 1], MARKS[m + 5]), L(MARKS[m + 2], MARKS[m + 6]), L(MARKS[m + 3], MARKS[m + 7]), MARKS[m + 8]], o);
   }
+  for (let o = 0; o < MK.length; o += 5) if (toSegment(lx, ly, MK[o], MK[o + 1], MK[o + 2], MK[o + 3]) < MK[o + 4]) return STRIPE;
   return ly > 2.7 ? COAT : GINGER;
 }
 
-/** Below this, a place off the middle line is bunching up on the inside of a bend (it would fold over itself), and is left out. */
-const FOLD = 0.3;
+/** Below this, a place off the middle line has folded over itself on the inside of a bend, and is left out. */
+const FOLD = 0.08;
 
 /**
  * Places the particles on this shape (its field `f`): rig (0, 0) lands on (ox, gy), `sc` px per rig unit.
@@ -1299,7 +1405,7 @@ export function place(w: Swarm, s: Shape, f: Field, ox: number, gy: number, sc: 
   const back = s.yaw < 0;
   const front = s.tailFront > 0.5;
   const E = s.eyes;
-  for (let i = 0; i < w.n; i++) {
+  for (let i = 0; i < w.core; i++) {
     const p = w.part[i];
     const kind = w.kind[i];
     const a = w.a[i];
@@ -1319,7 +1425,9 @@ export function place(w: Swarm, s: Shape, f: Field, ox: number, gy: number, sc: 
       const off = b * r;
       x = lerp(D[q * 3], D[q1 * 3], u) + lerp(NX[q], NX[q1], u) * off;
       y = lerp(D[q * 3 + 1], D[q1 * 3 + 1], u) + lerp(NY[q], NY[q1], u) * off;
-      ok = 1 + lerp(KAP[q], KAP[q1], u) * off > FOLD;
+      // On the inside of a bend the places bunch up (by `squeeze`): only that share of them is drawn, so the density holds.
+      const squeeze = 1 + lerp(KAP[q], KAP[q1], u) * off;
+      ok = squeeze > FOLD && (squeeze >= 1 || frac(i * 0.7548777) < squeeze);
       // How deep inside its own part it is meant to be (rig units, negative inside).
       const want = Math.abs(off) - r - inset;
       // What is in front: the body before the legs and the tail, the near legs before the far ones and the tail, the
@@ -1331,13 +1439,17 @@ export function place(w: Swarm, s: Shape, f: Field, ox: number, gy: number, sc: 
         if (ok && (p < 2 || p === TAIL_I) && sample(f, f.near, x, y) < 0.4 * d) ok = false;
         if (ok && front && sample(f, f.tail, x, y) < 0.3 * d) ok = false;
       }
-      if (ok && p === BODY_I && within(0, x, y, -0.4 * d)) ok = false;
+      // Inside the skull the face is drawn; on its rim, where the skull's own dots give way to the neck, the body's carry on.
+      if (ok && p === BODY_I && inside(0, x, y, side > 0.35 ? 0.8 : 1)) ok = false;
       // Where a part lies over itself (a folded leg: the thigh over the shank), one layer shows: the one the spot is deepest in.
       const own = p === BODY_I ? f.body : p < 2 ? f.far : p < 4 ? f.near : null;
-      if (ok && own && sample(f, own, x, y) < want - 1.5 * d) ok = false;
+      // (Not the neck near the skull: there the deeper layer runs under the face, which hides it.)
+      if (ok && own && sample(f, own, x, y) < want - 1.5 * d && !(p === BODY_I && inside(0, x, y, 1.3))) ok = false;
       // A near leg's outline across the body: those dots brighten, the way the reference's inner contours do.
-      if (ok && p === BODY_I && (i * 0.618034) % 1 < 0.5 && Math.abs(sample(f, f.near, x, y)) < 0.45 * d) lit = 0;
+      if (ok && p === BODY_I && lit < 3 && Math.abs(sample(f, f.near, x, y)) < 0.45 * d) lit = 0;
       if (p < 2) tone = DIMMER[tone];
+      // A dark mark reads on the dark ground by being dim: its dots step down.
+      if (tone === STRIPE || tone === DEEP) lit = Math.max(lit, 2);
     } else if (kind === POLAR) {
       const j = back && p !== SKULL ? EAR_FAR + EAR_NEAR - p - SKULL : p - SKULL;
       // At its angle in the head's frame (mirrored looking back, turned with the head), a fraction of the way to the outline.
@@ -1346,10 +1458,12 @@ export function place(w: Swarm, s: Shape, f: Field, ox: number, gy: number, sc: 
       x = CEN[j * 2] + Math.cos(wa) * r;
       y = CEN[j * 2 + 1] + Math.sin(wa) * r;
       if (p === SKULL) {
-        // The back of the skull runs into the neck: there the body's particles carry on.
-        if (b > 0.8 && sample(f, f.body, x, y) < -0.6 * d) ok = false;
+        // In profile the back of the skull runs into the neck: there the body's particles carry on. From the front the
+        // head is in front of the neck, and its whole outline shows.
+        if (b > 0.8 && side > 0.35 && Math.cos(a) < 0.2 && sample(f, f.body, x, y) < -0.6 * d) ok = false;
         tone = face(s, x, y, eyes);
         if (tone === HIDDEN) ok = false;
+        if (tone === STRIPE || tone === DEEP) lit = Math.max(lit, 2);
       } else {
         if (within(0, x, y, 0.3 * d)) ok = false;
         if (ok && j === 2 && within(1, x, y, 0.3 * d)) ok = false;
@@ -1360,23 +1474,31 @@ export function place(w: Swarm, s: Shape, f: Field, ox: number, gy: number, sc: 
     } else {
       // An eye's ring: on the eye on that side of the face, if it shows.
       ok = false;
-      for (let e = 0; e < E.length; e += 6) {
+      const dot = eyeDot(a, eyes);
+      for (let e = 0; e < E.length && dot; e += 6) {
         if (E[e + 5] !== b) continue;
-        const [u, v] = eyeDot(a, eyes);
-        const ex = u * E[e + 2];
-        const ey = v * E[e + 3];
+        const ex = dot[0] * E[e + 2];
+        const ey = dot[1] * E[e + 3];
         const c = Math.cos(E[e + 4]);
         const sn = Math.sin(E[e + 4]);
         x = E[e] + ex * c - ey * sn;
         y = E[e + 1] + ex * sn + ey * c;
         ok = E[e + 2] > 0.35;
-        tone = eyes > 0.3 ? EYE : STRIPE;
-        lit = 0;
+        tone = dot[2];
+        lit = dot[3];
       }
     }
     w.x[i] = ox + x * sc;
     w.y[i] = gy - y * sc;
     w.tone[i] = ok ? tone : HIDDEN;
     w.lit[i] = lit;
+  }
+  // The veil follows the particles it rides on, and shows where they do.
+  for (let i = w.core; i < w.n; i++) {
+    const j = w.up[i - w.core];
+    w.x[i] = w.x[j] + w.a[i] * sc;
+    w.y[i] = w.y[j] - w.b[i] * sc;
+    w.tone[i] = w.tone[j];
+    w.lit[i] = 3;
   }
 }

@@ -13,15 +13,16 @@ import { keyed, stand, type Keys } from './catkeys';
 /** The handle's particle: a square this many px wide. */
 export const DOT = 2;
 /** The field the particles read is sampled this many px apart. */
-const GRAIN = 3;
+const GRAIN = 4;
 /**
  * Tones: the Machine's grey ramp, darkest first, and the asset's cyan; then the cat's coat (catrig.ts names them):
  * two stripe browns, the coat and its far step, ginger, cream and its far step, and her eyes in the system's green.
  */
 const RGBS = [BORDER, FAINT, MUTED, BODY, BODY_STRONG, TEXT, CYAN, ...COAT_RGB, GREEN];
 const TONES = RGBS.map((c) => rgb(c));
-/** Each tone at the three brightness steps a particle can have. */
-const ALPHA = [1, 0.74, 0.46];
+/** Each tone at the brightness steps a particle can have: full, middle, dim, and a veil's faint speck. */
+const ALPHA = [1, 0.74, 0.46, 0.3];
+const STEPS = ALPHA.length;
 const LIT = RGBS.flatMap((c) => ALPHA.map((a) => rgb(c, a)));
 const STREAK = RGBS.flatMap((c) => ALPHA.map((a) => rgb(c, a * 0.45)));
 export const CYAN_TONE = 6;
@@ -41,12 +42,14 @@ export const STYLES = {
   detail: { count: 3800, edge: 4.2, band: 0.15, stray: 0, size: [1.2, 2.2, 1.4], bright: 0.55, mid: 0.33, even: 0.95, trail: 0 },
   /** Soft: very many faint specks, a frayed edge. */
   soft: { count: 7500, edge: 1.6, band: 0.35, stray: 0.12, size: [0.8, 1.6, 1.4], bright: 0.18, mid: 0.36, even: 0.35, trail: 0 },
+  /** Cloud and soft at once: a dense core of fine particles carries the form, a veil of faint specks frays its edge. */
+  haze: { count: 4400, edge: 2.1, band: 0.3, stray: 0.02, size: [0.9, 1.9, 1.7], bright: 0.4, mid: 0.4, even: 0.55, trail: 0, veil: 6000, fray: 2.6 },
   /** Sparse, and every moving particle leaves a short streak behind it. */
   motion: { count: 1500, edge: 3, band: 0.24, stray: 0.07, size: [1.1, 3.4, 2.4], bright: 0.42, mid: 0.34, even: 0.8, trail: 0.035 },
 } satisfies Record<string, Style>;
 export type StyleName = keyof typeof STYLES;
 /** The look the site uses (the intro, the about section, the hero). */
-export const LOOK: StyleName = 'sparse';
+export const LOOK: StyleName = 'haze';
 
 /** The particles for a cat drawn at `sc` px per rig unit, that will take the given shapes (the first is where they are laid out). */
 export const catSwarm = (shapes: Shape[], sc: number, style: Style = STYLES[LOOK]) => swarm(shapes, style, sc, DOT / 2 / sc);
@@ -85,8 +88,8 @@ function bucket(tone: Uint8Array, lit: Uint8Array | null, n: number, steps: numb
  */
 export function drawSwarm(ctx: CanvasRenderingContext2D, w: Swarm, prev?: { x: Float32Array; y: Float32Array }) {
   const { x, y, size } = w;
-  const start = bucket(w.tone, w.lit, w.n, 3);
-  for (let b = 0; b < TONE_COUNT * 3; b++) {
+  const start = bucket(w.tone, w.lit, w.n, STEPS);
+  for (let b = 0; b < TONE_COUNT * STEPS; b++) {
     if (start[b] === start[b + 1]) continue;
     if (prev) {
       ctx.strokeStyle = STREAK[b];
@@ -108,12 +111,19 @@ export function drawSwarm(ctx: CanvasRenderingContext2D, w: Swarm, prev?: { x: F
     }
     ctx.fillStyle = LIT[b];
     let round = false;
-    for (let j = start[b]; j < start[b + 1]; j++) {
+    // The small ones, as squares in paths of a few hundred: one fill for many instead of one each.
+    ctx.beginPath();
+    for (let j = start[b], k = 0; j < start[b + 1]; j++) {
       const i = order[j];
       const s = size[i];
       if (s >= 2.4) round = true;
-      else ctx.fillRect(x[i] - s / 2, y[i] - s / 2, s, s);
+      else ctx.rect(x[i] - s / 2, y[i] - s / 2, s, s);
+      if (++k % 256 === 0) {
+        ctx.fill();
+        ctx.beginPath();
+      }
     }
+    ctx.fill();
     if (!round) continue;
     ctx.beginPath();
     for (let j = start[b]; j < start[b + 1]; j++) {
