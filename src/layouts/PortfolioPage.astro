@@ -37,6 +37,8 @@ const description = basics.summary.split('. ')[0].replace(/\.?$/, '.');
 const user = content.promptUser;
 const place = [basics.location.city, basics.location.countryCode].filter(Boolean).join(', ');
 const pad = (n: number) => String(n).padStart(2, '0');
+/** When the Machine filed the about section's photo: the day the site was built. */
+const filed = new Date().toISOString().slice(0, 10);
 // About and open source are optional in the data: a section that has nothing to show is not there at all.
 const { about } = content;
 const repos = content.openSource.map((repo) => ({ ...repo, id: `opensource/${slugify(repo.name)}` }));
@@ -359,7 +361,7 @@ const alternates = [
                 readout={`${pad(about.facts.length)} ${copy.sections.about.unit}`}
                 sub={copy.sections.about.sub}
               />
-              <div class:list={['mc-personal', { 'has-pet': content.cat }]}>
+              <div class:list={['mc-personal', { 'has-pet': content.cat || about.photo }]}>
                 <div class="mc-personal-file" data-tone="white">
                   <p class="mc-tags">
                     <span class="mc-tag" data-m="d" data-at="0.3">
@@ -387,24 +389,44 @@ const alternates = [
                     </>
                   )}
                 </div>
-                {content.cat && (
-                  <div class="mc-pet" data-fx="about" data-tone="white" data-log={JSON.stringify(copy.catLog)} aria-hidden="true">
-                    <p class="mc-tags">
-                      <span
-                        class="mc-tag"
-                        data-m="t"
-                        data-at="0.3"
-                        data-pre={JSON.stringify([
-                          ['red', copy.scene.unidentified, 0.5],
-                          ['amber', copy.scene.analyzing, 1.3],
-                        ])}
-                      >
-                        {copy.feline} · {content.cat}
-                      </span>
-                    </p>
-                    <div class="mc-pet-box mc-lock" data-m="l" data-at="0.3">
-                      <canvas class="mc-fx" />
-                    </div>
+                {(content.cat || about.photo) && (
+                  <div class="mc-evidence">
+                    {about.photo && (
+                      <figure class="mc-print" data-tone="white">
+                        <div class="mc-print-frame mc-lock" data-m="l" data-at="0.15">
+                          <img src={about.photo.src} alt={about.photo.alt} width="800" height="600" loading="lazy" decoding="async" />
+                        </div>
+                        <figcaption class="mc-print-cap">
+                          <span data-m="d" data-at="0.25">
+                            {copy.subjectPhoto}
+                            {content.cat && ` · ${content.cat}`}
+                          </span>
+                          <span data-m="d" data-at="0.4">
+                            {copy.filed} {filed}
+                          </span>
+                        </figcaption>
+                      </figure>
+                    )}
+                    {content.cat && (
+                      <div class="mc-pet" data-fx="about" data-tone="white" data-log={JSON.stringify(copy.catLog)} aria-hidden="true">
+                        <p class="mc-tags">
+                          <span
+                            class="mc-tag"
+                            data-m="t"
+                            data-at="0.3"
+                            data-pre={JSON.stringify([
+                              ['red', copy.scene.unidentified, 0.5],
+                              ['amber', copy.scene.analyzing, 1.3],
+                            ])}
+                          >
+                            {copy.feline} · {content.cat}
+                          </span>
+                        </p>
+                        <div class="mc-pet-box mc-lock" data-m="l" data-at="0.3">
+                          <canvas class="mc-fx" />
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

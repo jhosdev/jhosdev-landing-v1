@@ -83,6 +83,8 @@ export interface About {
   paragraphs: string[];
   /** Short label / value rows, e.g. "coding since" / "2015" */
   facts: { label: string; value: string }[];
+  /** Optional: a photo for the section (a path under public/, e.g. "/pet.jpg", and its alt text). Nothing renders without it. */
+  photo?: { src: string; alt: string };
 }
 
 /** A public repository: meta.site.openSource[]. */

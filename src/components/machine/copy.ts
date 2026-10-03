@@ -70,6 +70,10 @@ interface MachineVoice {
   offDuty: string;
   knownFacts: string;
   feline: string;
+  /** The about section's photo of the cat, filed as evidence, and the particle frame it is the source for. */
+  subjectPhoto: string;
+  filed: string;
+  reconstruction: string;
   /** What the cat is doing, as the Machine logs it in the about section's frame (catkeys.ts ABOUT_LOG points into it). */
   catLog: string[];
   /** The play page's title. */
@@ -188,6 +192,9 @@ const MACHINE: MachineVoice = {
   offDuty: 'Off duty',
   knownFacts: 'Known facts',
   feline: 'Feline',
+  subjectPhoto: 'Subject photo',
+  filed: 'Filed',
+  reconstruction: 'Reconstruction',
   catLog: ['Asleep', 'Waking', 'Yawning', 'Stretching', 'On watch · by the file', 'Slow blink · trust', 'Settling in'],
   simulation: 'Simulation',
   play: 'Play',
