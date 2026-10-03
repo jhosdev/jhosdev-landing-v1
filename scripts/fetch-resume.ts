@@ -69,6 +69,17 @@ async function fetchAndWrite(env: string, file: string): Promise<void> {
 
   writeFileSync(target, `${JSON.stringify(data, null, 2)}\n`, 'utf-8');
   console.log(`Wrote src/data/${file}`);
+
+  // The About photo lives next to the JSON on the data host and is served from
+  // public/ (gitignored), so the image never enters the repo.
+  const photo = (data as { meta?: { site?: { about?: { photo?: { src?: string } } } } }).meta?.site?.about?.photo?.src;
+  if (env === 'RESUME_URL_EN' && photo?.startsWith('/')) {
+    const photoUrl = new URL(photo.slice(1), url);
+    const img = await fetch(photoUrl);
+    if (!img.ok) throw new Error(`${env}: photo ${photoUrl} returned HTTP ${img.status}`);
+    writeFileSync(join(ROOT, 'public', photo.slice(1)), Buffer.from(await img.arrayBuffer()));
+    console.log(`Wrote public${photo}`);
+  }
 }
 
 try {

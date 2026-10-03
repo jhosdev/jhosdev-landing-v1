@@ -30,3 +30,6 @@ pnpm-debug.log*
 
 # jetbrains setting folder
 .idea/
+
+# About photo — fetched next to the resume JSON at build time; never committed
+public/luna.jpg
