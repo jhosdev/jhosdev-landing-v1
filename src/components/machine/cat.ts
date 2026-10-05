@@ -52,8 +52,12 @@ export const LOOK: StyleName = 'haze';
 
 /** The particles for a cat drawn at `sc` px per rig unit, that will take the given shapes (the first is where they are laid out). */
 export const catSwarm = (shapes: Shape[], sc: number, style: Style = STYLES[LOOK]) => swarm(shapes, style, sc, DOT / 2 / sc);
-/** Puts the particles on this shape: rig (0, 0) lands on (ox, gy). `open` closes the eyes. */
-export const placeCat = (w: Swarm, s: Shape, ox: number, gy: number, sc: number, open = 1) => place(w, s, field(s, GRAIN / sc), ox, gy, sc, open);
+/** Puts the particles on this shape: rig (0, 0) lands on (ox, gy). `open` closes the eyes; `all`: see place(). */
+export function placeCat(w: Swarm, s: Shape, ox: number, gy: number, sc: number, open = 1, all = true) {
+  // place() reads a part's field at most 0.45 spacings outside it, between nodes up to a grid step and a half away.
+  const g = GRAIN / sc;
+  place(w, s, field(s, g, 0.5 * w.d + 2 * g), ox, gy, sc, open, all);
+}
 
 let order = new Int32Array(0);
 /** Sorts the shown particles by tone (and brightness step, `steps` of them) once, a counting sort; returns where each batch starts in `order`. */
@@ -139,6 +143,7 @@ export function drawFrame(ctx: CanvasRenderingContext2D, frame: (t: number) => S
 
 /** The Machine has not classified her yet below `line` (px): there she is brightness only, on its grey ramp. */
 export function unclassified(w: Swarm, line: number) {
+  if (line === Infinity) return;
   for (let i = 0; i < w.n; i++) if (w.tone[i] !== HIDDEN && w.y[i] > line) w.tone[i] = GREY[w.tone[i]];
 }
 
@@ -263,8 +268,8 @@ export function buildLuna(keys: Keys, loop: number, W: number, H: number, from =
   return { keys, loop, sc: near, ox: W / 2, gy: H, w, home, bx: new Float32Array(n), by: new Float32Array(n), bt: new Uint8Array(n), bs: new Float32Array(n), bl: new Uint8Array(n), W, H, cam, from };
 }
 
-/** Puts her particles where the timeline has her at `lt` (seconds into it). */
-export function poseLuna(L: Luna, lt: number) {
+/** Puts her particles where the timeline has her at `lt` (seconds into it); `all`: where the hidden ones would be too. */
+export function poseLuna(L: Luna, lt: number, all = true) {
   keyed(pose, L.keys, lt, L.loop);
   skin(pose, shape);
   const n = L.cam.length / 3;
@@ -273,7 +278,7 @@ export function poseLuna(L: Luna, lt: number) {
   const u = f - k;
   const c = L.cam;
   const sc = lerp(c[k * 3], c[k * 3 + 3], u);
-  placeCat(L.w, shape, lerp(c[k * 3 + 1], c[k * 3 + 4], u), lerp(c[k * 3 + 2], c[k * 3 + 5], u), sc);
+  placeCat(L.w, shape, lerp(c[k * 3 + 1], c[k * 3 + 4], u), lerp(c[k * 3 + 2], c[k * 3 + 5], u), sc, 1, all);
   return L.w;
 }
 
@@ -284,7 +289,8 @@ export function poseLuna(L: Luna, lt: number) {
  */
 export function drawLuna(ctx: CanvasRenderingContext2D, L: Luna, lt: number, t: number, grow: number, form: number, line = Infinity) {
   if (grow <= 0) return;
-  const w = poseLuna(L, lt);
+  // Resolving, the particles a part in front covers still fly to where they would be.
+  const w = poseLuna(L, lt, form < 1);
   unclassified(w, line);
   ctx.save();
   ctx.globalAlpha *= grow;

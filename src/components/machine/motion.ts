@@ -245,12 +245,45 @@ export function createFx(host: HTMLElement, calm: boolean): Fx | null {
 const memo = <T,>(fx: Fx, key: string, make: () => T): T => (fx.memo[key] ??= make()) as T;
 const all = (fx: Fx, selector: string) => [...fx.host.querySelectorAll<HTMLElement>(selector)];
 
+/** A font as the canvas reports it back once set: setting the same font again every frame costs a parse each time. */
+const fonts = new Map<string, string>();
 function text(ctx: CanvasRenderingContext2D, s: string, x: number, y: number, size: number, col: string, align: CanvasTextAlign = 'left', weight = 400) {
-  ctx.font = font(size, weight);
+  const f = font(size, weight);
+  if (ctx.font !== fonts.get(f)) {
+    ctx.font = f;
+    fonts.set(f, ctx.font);
+  }
   ctx.fillStyle = col;
   ctx.textAlign = align;
   ctx.textBaseline = 'alphabetic';
   ctx.fillText(s, x, y);
+}
+
+/** Bitmaps of left-aligned lines that stay the same frame after frame: fillText shapes its text again on every call. */
+const stamps = new Map<string, { cv: HTMLCanvasElement; asc: number; m: number }>();
+/** `text` for a line that does not change: drawn once into a bitmap at the canvas's scale, then copied, whole pixels for whole pixels. */
+function stamp(ctx: CanvasRenderingContext2D, s: string, x: number, y: number, size: number, col: string) {
+  const m = ctx.getTransform().a;
+  const key = `${s}|${size}|${col}|${m}`;
+  let st = stamps.get(key);
+  if (!st) {
+    if (stamps.size > 16) stamps.clear();
+    const cv = document.createElement('canvas');
+    const c = cv.getContext('2d');
+    // Not before the face has loaded: the bitmap would keep the fallback.
+    if (!c || !document.fonts.check(font(size))) return text(ctx, s, x, y, size, col);
+    c.font = font(size);
+    const asc = Math.ceil(size * 1.2);
+    cv.width = Math.ceil((c.measureText(s).width + 4) * m);
+    cv.height = Math.ceil(asc * 1.6 * m);
+    c.scale(m, m);
+    c.font = font(size);
+    c.fillStyle = col;
+    c.fillText(s, 2, asc);
+    st = { cv, asc, m };
+    stamps.set(key, st);
+  }
+  ctx.drawImage(st.cv, x - 2, y - st.asc, st.cv.width / m, st.cv.height / m);
 }
 
 function corners(ctx: CanvasRenderingContext2D, b: Box, l: number, col: string, lw = 1.5) {
@@ -571,7 +604,9 @@ const about: Painter = (fx, t) => {
   while (k < ABOUT_LOG.length - 1 && lt >= ABOUT_LOG[k + 1][0]) k++;
   const [since, entry] = ABOUT_LOG[k];
   const s = (L.log[entry] ?? '').toUpperCase();
-  text(ctx, still ? s : decode(s, P(lt - since, 0, 0.4), t, entry + 3), 10, H - 10, 10, rgb(MUTED), 'left');
+  const dk = P(lt - since, 0, 0.4);
+  if (still || dk >= 1) stamp(ctx, s, 10, H - 10, 10, rgb(MUTED));
+  else text(ctx, decode(s, dk, t, entry + 3), 10, H - 10, 10, rgb(MUTED), 'left');
 };
 
 /** One strip of signal: red noise ahead of the decode front, a calm green carrier behind it. */

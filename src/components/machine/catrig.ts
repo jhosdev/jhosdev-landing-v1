@@ -667,7 +667,7 @@ export interface Field {
   x0: number;
   y0: number;
   g: number;
-  /** One value per node, row by row from y0 up. */
+  /** One value per node, row by row from y0 up (not built with `near`). */
   d: Float32Array;
   /** The same grid for the body alone, the near legs alone, the far legs alone and the tail alone (exact only near them). */
   body: Float32Array;
@@ -677,7 +677,12 @@ export interface Field {
 }
 
 /** Samples the silhouette's field (discs only; the head's outlines are not in it). */
-export function field(s: Shape, g: number): Field {
+/**
+ * `near` (rig units), for placing particles: each part's field is only needed that far outside it, and the smooth union
+ * of every part (`d`), which placing never reads, is left out. Without it, both are exact as far as the blends reach.
+ */
+export function field(s: Shape, g: number, near = 0): Field {
+  const union = !near;
   const d = s.discs;
   let x0 = Infinity;
   let y0 = Infinity;
@@ -747,10 +752,10 @@ export function field(s: Shape, g: number): Field {
   const P = s.parts;
   let from = 0;
   for (let i = 0; i < P.length; i += 2) {
-    if (P[i + 1] === BODY_PART) discs(B, from, P[i], 3);
+    if (P[i + 1] === BODY_PART) discs(B, from, P[i], near || 3);
     from = P[i];
   }
-  N.set(B.subarray(0, n));
+  if (union) N.set(B.subarray(0, n));
   from = 0;
   for (let i = 0; i < P.length; i += 2) {
     const kind = P[i + 1];
@@ -770,12 +775,12 @@ export function field(s: Shape, g: number): Field {
         by0 = Math.min(by0, d[q + 1] - d[q + 2]);
         by1 = Math.max(by1, d[q + 1] + d[q + 2]);
       }
-      const m = k + g;
+      const m = (near || k) + g;
       const c0 = Math.max(0, Math.floor((bx0 - m - x0) / g));
       const c1 = Math.min(nx - 1, Math.ceil((bx1 + m - x0) / g));
       for (let j = Math.max(0, Math.floor((by0 - m - y0) / g)), e = Math.min(ny - 1, Math.ceil((by1 + m - y0) / g)); j <= e; j++) Q.fill(BIG, j * nx + c0, j * nx + c1 + 1);
     }
-    discs(Q, a, from, k);
+    discs(Q, a, from, near || k);
     const [i0, j0, i1, j1] = box;
     for (let j = j0; j <= j1; j++) {
       for (let q = j * nx + i0, e = j * nx + i1; q <= e; q++) {
@@ -786,6 +791,7 @@ export function field(s: Shape, g: number): Field {
         }
         if (kind === NEAR_LEG && v < L[q]) L[q] = v;
         if (kind === TAIL_PART) T[q] = v;
+        if (!union) continue;
         const u = smin(B[q], v, k);
         if (u < N[q]) N[q] = u;
       }
@@ -793,7 +799,7 @@ export function field(s: Shape, g: number): Field {
   }
   // Far legs join the body softly too; drawn a step dimmer, they need no cut to read apart from the near ones.
   const k = BLEND[FAR_LEG];
-  for (let q = 0; q < n; q++) {
+  for (let q = 0; union && q < n; q++) {
     if (F[q] >= BIG) continue;
     const u = smin(B[q], F[q], k);
     if (u < N[q]) N[q] = u;
@@ -890,6 +896,10 @@ export interface Swarm {
   /** Particles before the veil; each veil speck's particle (index from `core` on); for a speck, a and b are its offset (rig units). */
   core: number;
   up: Int32Array;
+  /** cos and sin of `a` (a polar particle's angle), and the segment a swept one was on last frame (where to look first). */
+  ca: Float64Array;
+  sa: Float64Array;
+  seg: Int32Array;
   /** Rig units: the mean spacing it was laid out with, and half a dot. */
   d: number;
   inset: number;
@@ -1021,7 +1031,12 @@ function binAt(g: Float32Array, p: number, a: number, b: number) {
 
 /** The index i in c[from, end) with c[i] <= v < c[i + 1]; `segU` is how far between them. */
 let segU = 0;
-function seek(c: Float32Array, from: number, end: number, v: number) {
+function seek(c: Float32Array, from: number, end: number, v: number, hint = -1) {
+  // Frame to frame a particle mostly stays on its segment: try that one first (the same answer the search gives).
+  if (hint > from && hint < end - 1 && v > c[from] && c[hint] <= v && v < c[hint + 1]) {
+    segU = (v - c[hint]) / (c[hint + 1] - c[hint] || 1);
+    return hint;
+  }
   let lo = from;
   let hi = end - 1;
   segU = 0;
@@ -1363,11 +1378,15 @@ export function swarm(shapes: Shape[], style: Style, sc: number, inset = 1 / sc,
     Up.push(i);
   }
   const n = K.length;
+  const a = Float32Array.from(A);
   return {
     n,
     kind: Uint8Array.from(K),
     part: Uint8Array.from(Pt),
-    a: Float32Array.from(A),
+    a,
+    ca: Float64Array.from(a, Math.cos),
+    sa: Float64Array.from(a, Math.sin),
+    seg: new Int32Array(n),
     b: Float32Array.from(Bv),
     edge: Uint8Array.from(Ed),
     coat: Uint8Array.from(Co),
@@ -1404,14 +1423,16 @@ const MK = new Float32Array((MARKS.length / 9) * 5);
 let MK_SIDE = NaN;
 
 /** Distance from (x, y) to the segment (ax, ay)-(bx, by). */
-function toSegment(x: number, y: number, ax: number, ay: number, bx: number, by: number) {
+/** Squared distance from (x, y) to the segment a-b. */
+function toSegment2(x: number, y: number, ax: number, ay: number, bx: number, by: number) {
   const vx = bx - ax;
   const vy = by - ay;
   const u = cl(((x - ax) * vx + (y - ay) * vy) / (vx * vx + vy * vy || 1));
   const dx = x - ax - vx * u;
   const dy = y - ay - vy * u;
-  return Math.sqrt(dx * dx + dy * dy);
+  return dx * dx + dy * dy;
 }
+const toSegment = (x: number, y: number, ax: number, ay: number, bx: number, by: number) => Math.sqrt(toSegment2(x, y, ax, ay, bx, by));
 
 /** Whether (x, y) is inside the ellipse at (cx, cy) with radii (rx, ry). */
 const inOval = (x: number, y: number, cx: number, cy: number, rx: number, ry: number) => ((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2 < 1;
@@ -1534,7 +1555,7 @@ function face(s: Shape, x: number, y: number, open: number) {
     MK_SIDE = side;
     for (let m = 0, o = 0; m < MARKS.length; m += 9, o += 5) MK.set([L(MARKS[m], MARKS[m + 4]), L(MARKS[m + 1], MARKS[m + 5]), L(MARKS[m + 2], MARKS[m + 6]), L(MARKS[m + 3], MARKS[m + 7]), MARKS[m + 8]], o);
   }
-  for (let o = 0; o < MK.length; o += 5) if (toSegment(lx, ly, MK[o], MK[o + 1], MK[o + 2], MK[o + 3]) < MK[o + 4]) return STRIPE;
+  for (let o = 0; o < MK.length; o += 5) if (toSegment2(lx, ly, MK[o], MK[o + 1], MK[o + 2], MK[o + 3]) < MK[o + 4] * MK[o + 4]) return STRIPE;
   return ly > 2.7 ? COAT : GINGER;
 }
 
@@ -1544,11 +1565,15 @@ const FOLD = 0.08;
 /**
  * Places the particles on this shape (its field `f`): rig (0, 0) lands on (ox, gy), `sc` px per rig unit.
  * `open` (0..1) closes the eyes further than the pose has them. Writes each particle's position, tone (HIDDEN when a
- * part in front covers it) and brightness.
+ * part in front covers it) and brightness. Without `all`, a particle its spot does not need now is only marked HIDDEN:
+ * where it would be is left as it was (nothing draws a hidden particle once the cat has formed).
  */
-export function place(w: Swarm, s: Shape, f: Field, ox: number, gy: number, sc: number, open = 1) {
+export function place(w: Swarm, s: Shape, f: Field, ox: number, gy: number, sc: number, open = 1, all = true) {
   const { d, inset } = w;
   chains(s);
+  // Locals: the loops below run for every particle, every frame.
+  const { x: wX, y: wY, tone: wTone, lit: wLit, a: wA, b: wB, part: wPart, kind: wKind, coat: wCoat, level: wLevel, den: wDen, seg: wSeg, ca: wCa, sa: wSa, up: wUp } = w;
+  const [vx, vy, vr, cum, nrx, nry, kap, rm] = [VX, VY, VR, CUM, NX, NY, KAP, RM];
   for (let j = 0; j < 3; j++) outline(s.polys[j], j);
   const eyes = cl(s.open * open);
   const [, , hc, hs, , flip, side] = s.head;
@@ -1560,30 +1585,35 @@ export function place(w: Swarm, s: Shape, f: Field, ox: number, gy: number, sc: 
   const front = s.tailFront > 0.5;
   const E = s.eyes;
   for (let i = 0; i < w.core; i++) {
-    const p = w.part[i];
-    const kind = w.kind[i];
-    const a = w.a[i];
-    const b = w.b[i];
+    const p = wPart[i];
+    const kind = wKind[i];
+    const a = wA[i];
+    const b = wB[i];
     let x = 0;
     let y = 0;
     let ok = true;
-    let tone = w.coat[i];
-    let lit = w.level[i];
+    let tone = wCoat[i];
+    let lit = wLevel[i];
     if (kind === SWEPT) {
       const from = PF[p];
       const end = PE[p];
-      const q = seek(CUM, from, end, a * CUM[end - 1]);
+      const q = seek(cum, from, end, a * cum[end - 1], wSeg[i]);
+      wSeg[i] = q;
       const q1 = Math.min(q + 1, end - 1);
       const u = segU;
-      const r0 = lerp(VR[q], VR[q1], u);
-      const r = Math.max(0, r0 - inset);
-      const off = b * r;
-      x = lerp(VX[q], VX[q1], u) + lerp(NX[q], NX[q1], u) * off;
-      y = lerp(VY[q], VY[q1], u) + lerp(NY[q], NY[q1], u) * off;
+      const r0 = lerp(vr[q], vr[q1], u);
       // The particles are laid out for the most area this spot takes in any pose; it shows the share it needs now. On the
       // inside of a bend the places bunch up (`squeeze` below one) and fewer show; where it folds over itself, none.
-      const squeeze = 1 + lerp(KAP[q], KAP[q1], u) * b * r0;
-      ok = squeeze > FOLD && frac(i * 0.7548777) * w.den[i] < CUM[end - 1] * r0 * squeeze;
+      const squeeze = 1 + lerp(kap[q], kap[q1], u) * b * r0;
+      ok = squeeze > FOLD && frac(i * 0.7548777) * wDen[i] < cum[end - 1] * r0 * squeeze;
+      if (!ok && !all) {
+        wTone[i] = HIDDEN;
+        continue;
+      }
+      const r = Math.max(0, r0 - inset);
+      const off = b * r;
+      x = lerp(vx[q], vx[q1], u) + lerp(nrx[q], nrx[q1], u) * off;
+      y = lerp(vy[q], vy[q1], u) + lerp(nry[q], nry[q1], u) * off;
       // How deep inside its own part it is meant to be (rig units, negative inside).
       const want = Math.abs(off) - r - inset;
       // What is in front: the body before the legs and the tail, the near legs before the far ones and the tail, the
@@ -1600,7 +1630,7 @@ export function place(w: Swarm, s: Shape, f: Field, ox: number, gy: number, sc: 
       // Where a part lies over itself (a folded leg: the thigh over the shank), one layer shows: the one the spot is deepest in.
       const own = p === BODY_I ? f.body : p < 2 ? f.far : p < 4 ? f.near : null;
       // (Not the neck near the skull: there the deeper layer runs under the face, which hides it.)
-      if (ok && own && sample(f, own, x, y) < want - 1.5 * d - (lerp(RM[q], RM[q1], u) - r0) && !(p === BODY_I && inside(0, x, y, 1.3))) ok = false;
+      if (ok && own && sample(f, own, x, y) < want - 1.5 * d - (lerp(rm[q], rm[q1], u) - r0) && !(p === BODY_I && inside(0, x, y, 1.3))) ok = false;
       // A near leg's outline across the body: those dots brighten, the way the reference's inner contours do.
       if (ok && p === BODY_I && lit < 3 && Math.abs(sample(f, f.near, x, y)) < 0.45 * d) lit = 0;
       if (p < 2) tone = DIMMER[tone];
@@ -1609,14 +1639,14 @@ export function place(w: Swarm, s: Shape, f: Field, ox: number, gy: number, sc: 
     } else if (kind === POLAR) {
       const j = back && p !== SKULL ? EAR_FAR + EAR_NEAR - p - SKULL : p - SKULL;
       // At its angle in the head's frame (mirrored looking back, turned with the head), a fraction of the way to the outline.
-      const wa = Math.atan2(Math.sin(a), Math.cos(a) * flip) + turn;
+      const wa = Math.atan2(wSa[i], wCa[i] * flip) + turn;
       const r = b * reach(j, wa);
       x = CEN[j * 2] + Math.cos(wa) * r;
       y = CEN[j * 2 + 1] + Math.sin(wa) * r;
       if (p === SKULL) {
         // In profile the back of the skull runs into the neck: there the body's particles carry on. From the front the
         // head is in front of the neck, and its whole outline shows.
-        if (b > 0.8 && side > 0.35 && Math.cos(a) < 0.2 && sample(f, f.body, x, y) < -0.6 * d) ok = false;
+        if (b > 0.8 && side > 0.35 && wCa[i] < 0.2 && sample(f, f.body, x, y) < -0.6 * d) ok = false;
         tone = face(s, x, y, eyes);
         if (tone === HIDDEN) ok = false;
         if (tone === STRIPE || tone === DEEP) lit = Math.max(lit, 2);
@@ -1644,17 +1674,17 @@ export function place(w: Swarm, s: Shape, f: Field, ox: number, gy: number, sc: 
         lit = dot[3];
       }
     }
-    w.x[i] = ox + x * sc;
-    w.y[i] = gy - y * sc;
-    w.tone[i] = ok ? tone : HIDDEN;
-    w.lit[i] = lit;
+    wX[i] = ox + x * sc;
+    wY[i] = gy - y * sc;
+    wTone[i] = ok ? tone : HIDDEN;
+    wLit[i] = lit;
   }
   // The veil follows the particles it rides on, and shows where they do.
   for (let i = w.core; i < w.n; i++) {
-    const j = w.up[i - w.core];
-    w.x[i] = w.x[j] + w.a[i] * sc;
-    w.y[i] = w.y[j] - w.b[i] * sc;
-    w.tone[i] = w.tone[j];
-    w.lit[i] = 3;
+    const j = wUp[i - w.core];
+    wX[i] = wX[j] + wA[i] * sc;
+    wY[i] = wY[j] - wB[i] * sc;
+    wTone[i] = wTone[j];
+    wLit[i] = 3;
   }
 }
