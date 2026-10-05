@@ -394,7 +394,15 @@ const alternates = [
                     {about.photo && (
                       <figure class="mc-print" data-tone="white">
                         <div class="mc-print-frame mc-lock" data-m="l" data-at="0.15">
-                          <img src={about.photo.src} alt={about.photo.alt} width="800" height="600" loading="lazy" decoding="async" />
+                          <div class="mc-print-crop">
+                            <img src={about.photo.src} alt={about.photo.alt} width="800" height="600" loading="lazy" decoding="async" />
+                          </div>
+                        </div>
+                        {/* Her reflection, as if the print stood on still water: decorative, the same file. */}
+                        <div class="mc-print-pool" aria-hidden="true">
+                          <div class="mc-print-crop">
+                            <img src={about.photo.src} alt="" width="800" height="600" loading="lazy" decoding="async" />
+                          </div>
                         </div>
                         <figcaption class="mc-print-cap">
                           <span data-m="d" data-at="0.25">
