@@ -435,7 +435,7 @@ export function walkFoot(s: number, leg: number, lift: number, feet: Float32Arra
 }
 
 /** Sitting: where the spine, the head and the feet (far hind, far fore, near hind, near fore) are. x = 0 is where it sits. */
-export const SIT = { hx: -11, hy: 6.5, sx: 5, sy: 26.5, bend: 3.2, headX: 7.5, headY: 39, feet: [1.4, 13.4, 0, 10.4] };
+export const SIT = { hx: -11, hy: 6.5, sx: 5, sy: 26.5, bend: 3.2, headX: 7.5, headY: 39, feet: [3.4, 13.4, 2.6, 10.4] };
 
 /** The cat sitting still. `swing` bends the tail (radians at its tip), `yaw` turns the head. */
 export function sitPose(p: Pose, swing = 0, yaw = -1) {
@@ -716,7 +716,7 @@ export function field(s: Shape, g: number): Field {
       const cx = d[i];
       const cy = d[i + 1];
       const r = d[i + 2];
-      if (i + 3 < b && Math.abs(r - lr) < 0.25 * g && Math.hypot(cx - lx, cy - ly) < Math.sqrt(2 * Math.min(r, lr) * g)) continue;
+      if (i + 3 < b && Math.abs(r - lr) < 0.25 * g && (cx - lx) ** 2 + (cy - ly) ** 2 < 2 * Math.min(r, lr) * g) continue;
       lx = cx;
       ly = cy;
       lr = r;
@@ -880,6 +880,8 @@ export interface Swarm {
   /** Its dot (px) and its brightness step (0 full, 1 middle, 2 dim, 3 a veil speck). */
   size: Float32Array;
   level: Uint8Array;
+  /** A swept particle's spot at its widest over the poses (area per unit of a and b): it shows when the spot needs it now. */
+  den: Float32Array;
   /** Particles before the veil; each veil speck's particle (index from `core` on); for a speck, a and b are its offset (rig units). */
   core: number;
   up: Int32Array;
@@ -893,45 +895,123 @@ export interface Swarm {
   lit: Uint8Array;
 }
 
-// Per frame, per disc: the length along its part to it, its normal, and how the normal turns along it (a bend).
+// Per frame, per point of each swept part's middle line: where it is (x, y), its half width, the length along the part
+// to it, its normal, and how the normal turns along it (a bend). The line runs through the part's discs and on into its
+// round ends (the rump, a toe, the tail's tip), so particles cover those too: a part's discs reach them, and without
+// them the end of a part was flat and a part behind it, hidden there, left a hole.
+let VX = new Float32Array(0);
+let VY = new Float32Array(0);
+let VR = new Float32Array(0);
 let CUM = new Float32Array(0);
 let NX = new Float32Array(0);
 let NY = new Float32Array(0);
 let KAP = new Float32Array(0);
+let RM = new Float32Array(0);
 const PF = [0, 0, 0, 0, 0, 0];
 const PE = [0, 0, 0, 0, 0, 0];
+/** Per part: how far along the line its discs start, and how long they run (the coat is laid out on them). */
+const CAP0 = [0, 0, 0, 0, 0, 0];
+const MIDL = [0, 0, 0, 0, 0, 0];
+/** Points on each round end. */
+const CAPN = 5;
 
-/** The six swept parts as chains: lengths, normals and bends, for this shape. */
+/** The six swept parts as chains: places, half widths, lengths, normals and bends, for this shape. */
 function chains(s: Shape) {
   const D = s.discs;
-  const m = D.length / 3;
-  if (CUM.length < m) [CUM, NX, NY, KAP] = Array.from({ length: 4 }, () => new Float32Array(m + 512));
+  const m = D.length / 3 + 12 * CAPN;
+  if (CUM.length < m) [VX, VY, VR, CUM, NX, NY, KAP, RM] = Array.from({ length: 8 }, () => new Float32Array(m + 512));
   let from = 0;
+  let o = 0;
+  const put = (x: number, y: number, r: number, nx: number, ny: number) => {
+    VX[o] = x;
+    VY[o] = y;
+    VR[o] = r;
+    NX[o] = nx;
+    NY[o] = ny;
+    o++;
+  };
   for (let p = 0; p < 6; p++) {
     const end = s.parts[p * 2] / 3;
-    PF[p] = from;
-    PE[p] = end;
-    for (let i = from; i < end; i++) {
+    PF[p] = o;
+    const normal = (i: number) => {
       const i0 = Math.max(from, i - 2) * 3;
       const i1 = Math.min(end - 1, i + 2) * 3;
       const tx = D[i1] - D[i0];
       const ty = D[i1 + 1] - D[i0 + 1];
-      const l = Math.hypot(tx, ty) || 1;
-      NX[i] = -ty / l;
-      NY[i] = tx / l;
+      const l = Math.sqrt(tx * tx + ty * ty) || 1;
+      return [-ty / l, tx / l];
+    };
+    // A round end: points along the tangent out to the rim, the half width that of the circle there.
+    const cap = (i: number, dir: number) => {
+      const [nx, ny] = normal(i);
+      const r = D[i * 3 + 2];
+      for (let j = 1; j <= CAPN; j++) {
+        const k = dir < 0 ? CAPN + 1 - j : j;
+        const th = (Math.PI / 2) * (k / (CAPN + 0.5));
+        const out = r * Math.sin(th) * dir;
+        put(D[i * 3] + ny * out, D[i * 3 + 1] - nx * out, r * Math.cos(th), nx, ny);
+      }
+    };
+    // A leg starts inside the body; the rump and the tail's root are ends (wrapped in front, the root lies over the body).
+    if (p >= BODY_I) cap(from, -1);
+    for (let i = from; i < end; i++) {
+      const [nx, ny] = normal(i);
+      put(D[i * 3], D[i * 3 + 1], D[i * 3 + 2], nx, ny);
     }
-    CUM[from] = 0;
-    KAP[from] = 0;
-    for (let i = from + 1; i < end; i++) {
-      const a = (i - 1) * 3;
-      const b = i * 3;
-      const ds = Math.hypot(D[b] - D[a], D[b + 1] - D[a + 1]);
+    cap(end - 1, 1);
+    PE[p] = o;
+    CUM[PF[p]] = 0;
+    KAP[PF[p]] = 0;
+    for (let i = PF[p] + 1; i < o; i++) {
+      const ds = Math.hypot(VX[i] - VX[i - 1], VY[i] - VY[i - 1]);
       CUM[i] = CUM[i - 1] + ds;
       // Along the tangent, how fast the normal turns: a point off the middle line by `off` travels (1 + KAP * off) as fast.
       KAP[i] = ds > 1e-6 ? ((NX[i] - NX[i - 1]) * NY[i] - (NY[i] - NY[i - 1]) * NX[i]) / ds : 0;
     }
+    CAP0[p] = p >= BODY_I ? CUM[PF[p] + CAPN] : 0;
+    // The widest the part gets within a half width of each point: where it swells quickly (the rump, a hip), a spot is
+    // deeper in its neighbour's disc than in its own, which is not the part folding over itself.
+    for (let i = PF[p], lo = PF[p], hi = PF[p]; i < o; i++) {
+      while (CUM[i] - CUM[lo] > 1.2 * VR[i]) lo++;
+      while (hi < o - 1 && CUM[hi + 1] - CUM[i] <= 1.2 * VR[i]) hi++;
+      let m = 0;
+      for (let k = lo; k <= hi; k++) m = Math.max(m, VR[k]);
+      RM[i] = m;
+    }
+    MIDL[p] = CUM[PE[p] - 1 - CAPN] - CAP0[p] || 1;
     from = end;
   }
+}
+
+/** Bins of a swept part's parameters (along: a, 0..1; across: b, -1..1) the area of a pose is measured in. */
+const NA = 40;
+const NBI = 8;
+/** The most a spot is laid out denser than at rest: past it, a spot is a little sparse at its widest. */
+const GAIN = 3;
+/**
+ * How much area a spot (a, b) of each swept part takes in this shape (chains must be current), per unit of a and b:
+ * the part's length, times its half width there, times how much a bend stretches (outside) or squeezes (inside) it.
+ */
+function areaBins(out: Float32Array) {
+  for (let p = 0; p < 6; p++) {
+    const L = CUM[PE[p] - 1];
+    for (let k = 0; k < NA; k++) {
+      const q = seek(CUM, PF[p], PE[p], ((k + 0.5) / NA) * L);
+      const q1 = Math.min(q + 1, PE[p] - 1);
+      const r = lerp(VR[q], VR[q1], segU);
+      const kap = lerp(KAP[q], KAP[q1], segU);
+      for (let j = 0; j < NBI; j++) out[(p * NA + k) * NBI + j] = L * r * Math.max(0, 1 + kap * (((j + 0.5) / NBI) * 2 - 1) * r);
+    }
+  }
+}
+/** A spot's value in area bins, between their centres. */
+function binAt(g: Float32Array, p: number, a: number, b: number) {
+  const u = cl(a * NA - 0.5, 0, NA - 1);
+  const v = cl(((cl(b, -1, 1) + 1) / 2) * NBI - 0.5, 0, NBI - 1);
+  const k = Math.min(NA - 2, Math.floor(u));
+  const j = Math.min(NBI - 2, Math.floor(v));
+  const at = (kk: number, jj: number) => g[(p * NA + kk) * NBI + jj];
+  return lerp(lerp(at(k, j), at(k + 1, j), u - k), lerp(at(k, j + 1), at(k + 1, j + 1), u - k), v - j);
 }
 
 /** The index i in c[from, end) with c[i] <= v < c[i + 1]; `segU` is how far between them. */
@@ -957,6 +1037,8 @@ const BINS = 64;
 const CEN = [0, 0, 0, 0, 0, 0, 0, 0];
 /** How far each outline reaches at most, to rule a point out cheaply. */
 const FAR = [0, 0, 0, 0];
+/** And how far at least: inside that, a point is inside without looking further. */
+const NEAR = [0, 0, 0, 0];
 const RAD = [new Float32Array(BINS), new Float32Array(BINS), new Float32Array(BINS), new Float32Array(BINS)];
 
 function outline(q: number[], j: number) {
@@ -973,20 +1055,26 @@ function outline(q: number[], j: number) {
   CEN[j * 2 + 1] = cy;
   const R = RAD[j];
   R.fill(0);
-  for (let i = 0; i < n; i++) {
-    const ax = q[i * 2];
-    const ay = q[i * 2 + 1];
-    const bx = q[((i + 1) % n) * 2];
-    const by = q[((i + 1) % n) * 2 + 1];
-    for (let u = 0; u < 1; u += 0.25) {
-      const x = lerp(ax, bx, u) - cx;
-      const y = lerp(ay, by, u) - cy;
-      const bin = Math.floor(((Math.atan2(y, x) + Math.PI) / (2 * Math.PI)) * BINS) % BINS;
-      R[bin] = Math.max(R[bin], Math.hypot(x, y));
+  // Where a ray from the centre through the middle of each bin leaves the outline: exact, so it moves smoothly with the
+  // outline (sampled points jumped from bin to bin, and the particles on the rim with them).
+  for (let k = 0; k < BINS; k++) {
+    const th = ((k + 0.5) / BINS) * 2 * Math.PI - Math.PI;
+    const dx = Math.cos(th);
+    const dy = Math.sin(th);
+    for (let i = 0; i < n; i++) {
+      const ax = q[i * 2] - cx;
+      const ay = q[i * 2 + 1] - cy;
+      const ex = q[((i + 1) % n) * 2] - cx - ax;
+      const ey = q[((i + 1) % n) * 2 + 1] - cy - ay;
+      const den = dx * ey - dy * ex;
+      if (Math.abs(den) < 1e-9) continue;
+      const u = (ax * dy - ay * dx) / den;
+      const t = (ax * ey - ay * ex) / den;
+      if (u >= 0 && u <= 1 && t > R[k]) R[k] = t;
     }
   }
-  for (let i = 0; i < BINS; i++) if (!R[i]) R[i] = Math.max(R[(i + 1) % BINS], R[(i + BINS - 1) % BINS]);
   FAR[j] = Math.max(...R);
+  NEAR[j] = Math.min(...R);
 }
 
 /** How far outline j reaches from its centre at angle `ang`. */
@@ -1001,15 +1089,22 @@ function reach(j: number, ang: number) {
 function within(j: number, x: number, y: number, m: number) {
   const dx = x - CEN[j * 2];
   const dy = y - CEN[j * 2 + 1];
-  return Math.hypot(dx, dy) < reach(j, Math.atan2(dy, dx)) + m;
+  const d2 = dx * dx + dy * dy;
+  const far = FAR[j] + m;
+  if (d2 > far * far) return false;
+  return Math.sqrt(d2) < reach(j, Math.atan2(dy, dx)) + m;
 }
 
 /** Whether (x, y) is less than the fraction k of the way from outline j's centre to the outline. */
 function inside(j: number, x: number, y: number, k: number) {
   const dx = x - CEN[j * 2];
   const dy = y - CEN[j * 2 + 1];
-  if (dx * dx + dy * dy > (k * FAR[j]) ** 2) return false;
-  return Math.hypot(dx, dy) < k * reach(j, Math.atan2(dy, dx));
+  const d2 = dx * dx + dy * dy;
+  const far = k * FAR[j];
+  if (d2 > far * far) return false;
+  const near = k * NEAR[j];
+  if (d2 < near * near) return true;
+  return Math.sqrt(dx * dx + dy * dy) < k * reach(j, Math.atan2(dy, dx));
 }
 
 /** The field at (x, y), between its nodes. Far from the shape it is large. */
@@ -1074,7 +1169,6 @@ const IRIS_DOTS = 7;
  */
 export function swarm(shapes: Shape[], style: Style, sc: number, inset = 1 / sc, seed = 11): Swarm {
   const s = shapes[0];
-  const D = s.discs;
   const rnd = mulberry32(seed);
   const K: number[] = [];
   const Pt: number[] = [];
@@ -1084,6 +1178,7 @@ export function swarm(shapes: Shape[], style: Style, sc: number, inset = 1 / sc,
   const Co: number[] = [];
   const Sz: number[] = [];
   const Lv: number[] = [];
+  const De: number[] = [];
   const total = Math.max(220, Math.round(style.count * Math.pow(sc / 6, 1.5)));
   const grow = cl(Math.sqrt(sc / 6), 0.65, 1.15);
   const [s0, s1, skew] = style.size;
@@ -1100,21 +1195,49 @@ export function swarm(shapes: Shape[], style: Style, sc: number, inset = 1 / sc,
     Sz.push(size * grow);
     Lv.push(level);
     Co.push(0);
+    De.push(0);
   };
+  // How much area each spot of the swept parts takes at most, over the poses she will take: the particles are laid out
+  // for that, and each frame shows the share the spot needs now (a folded haunch, the outside of a bend, are wider than
+  // at rest; laid out at rest they went bald). The inside of a bend needs less: there the share drops below one.
+  const den = new Float32Array(6 * NA * NBI);
+  const tmp = new Float32Array(6 * NA * NBI);
+  for (const sh of shapes) {
+    chains(sh);
+    areaBins(tmp);
+    for (let k = 0; k < den.length; k++) den[k] = Math.max(den[k], tmp[k]);
+  }
   chains(s);
+  areaBins(tmp);
+  /** How much denser than at rest a spot is laid out (capped: past it, a spot is a little sparse at its widest). */
+  const gain = tmp.map((r, k) => (den[k] <= 0 ? 1 : r <= 1e-6 ? GAIN : Math.min(GAIN, den[k] / r)));
+  /** What each spot is laid out for (area per unit of a and b). */
+  const laid = tmp.map((r, k) => r * gain[k]);
   const front = newShape();
   head(front, 0, 0, 0, 0, HEAD_K);
   outline(front.polys[0], 3);
   for (let j = 1; j < 3; j++) outline(s.polys[j], j);
-  // Each part gets particles in proportion to its area (the head more: the face carries the most).
   // Each part gets particles for its area and for its outline (so a thin leg is still drawn), the head more: the face carries the most.
   const areas: number[] = [];
   const shares: number[] = [];
+  /** Per swept part: how many more particles it is laid out with than at rest, and the most any spot of it gains. */
+  const more: number[] = [];
+  const most: number[] = [];
   for (let p = 0; p < 6; p++) {
     let a = 0;
-    for (let i = PF[p] + 1; i < PE[p]; i++) a += (D[i * 3 + 2] + D[i * 3 - 1]) * (CUM[i] - CUM[i - 1]);
+    for (let i = PF[p] + 1; i < PE[p]; i++) a += (VR[i] + VR[i - 1]) * (CUM[i] - CUM[i - 1]);
     areas.push(a);
     shares.push(a + 2.2 * CUM[PE[p] - 1]);
+    let r = 0;
+    let m = 0;
+    let g = 1;
+    for (let k = p * NA * NBI; k < (p + 1) * NA * NBI; k++) {
+      r += tmp[k];
+      m += tmp[k] * gain[k];
+      g = Math.max(g, gain[k]);
+    }
+    more.push(r > 0 ? m / r : 1);
+    most.push(g);
   }
   areas.push(area(front.polys[0]), area(s.polys[1]), area(s.polys[2]));
   shares.push(1.5 * areas[6] + 12, areas[7] + 6, areas[8] + 6);
@@ -1123,17 +1246,19 @@ export function swarm(shapes: Shape[], style: Style, sc: number, inset = 1 / sc,
   const density = (k: number) => 1 + (style.edge - 1) * cl((k - (1 - style.band)) / style.band);
   const mean = 1 + (style.edge - 1) * style.band * 0.5;
   for (let p = 0; p < 9; p++) {
-    const want = Math.round((total * shares[p]) / shareSum);
-    if (want < 1) continue;
+    const even = Math.round((total * shares[p]) / shareSum);
+    if (even < 1) continue;
     // Spacing for this part if it were even, and a grid to find neighbours by.
-    const spacing = Math.sqrt((areas[p] * mean) / want);
-    const cell = spacing;
+    const spacing = Math.sqrt((areas[p] * mean) / even);
+    const swept = p < 6;
+    const want = swept ? Math.round(even * more[p]) : even;
+    const top = swept ? most[p] : 1;
+    const cell = spacing / Math.sqrt(top);
     const grid = new Map<number, number[]>();
     const keyOf = (x: number, y: number) => Math.floor(x / cell) * 73856093 + Math.floor(y / cell);
-    // Where each disc starts in the part's area, to pick a place along it in proportion to its width there.
-    const swept = p < 6;
+    // Where each point of the line starts in the part's area, to pick a place along it in proportion to its width there.
     const cum: number[] = [0];
-    if (swept) for (let i = PF[p] + 1; i < PE[p]; i++) cum.push(cum[cum.length - 1] + (D[i * 3 + 2] + D[i * 3 - 1]) * (CUM[i] - CUM[i - 1]));
+    if (swept) for (let i = PF[p] + 1; i < PE[p]; i++) cum.push(cum[cum.length - 1] + (VR[i] + VR[i - 1]) * (CUM[i] - CUM[i - 1]));
     let got = 0;
     let a = 0;
     let b = 0;
@@ -1146,12 +1271,13 @@ export function swarm(shapes: Shape[], style: Style, sc: number, inset = 1 / sc,
         let lo = 0;
         while (lo < cum.length - 2 && cum[lo + 1] < v) lo++;
         const i = PF[p] + lo;
+        const i1 = Math.min(i + 1, PE[p] - 1);
         const u = (v - cum[lo]) / (cum[lo + 1] - cum[lo] || 1);
-        a = lerp(CUM[i], CUM[Math.min(i + 1, PE[p] - 1)], u) / (CUM[PE[p] - 1] || 1);
+        a = lerp(CUM[i], CUM[i1], u) / (CUM[PE[p] - 1] || 1);
         b = rnd() * 2 - 1;
-        const r = lerp(D[i * 3 + 2], D[Math.min(i + 1, PE[p] - 1) * 3 + 2], u);
-        x = D[i * 3] + NX[i] * b * r;
-        y = D[i * 3 + 1] + NY[i] * b * r;
+        const r = lerp(VR[i], VR[i1], u);
+        x = lerp(VX[i], VX[i1], u) + NX[i] * b * r;
+        y = lerp(VY[i], VY[i1], u) + NY[i] * b * r;
       } else {
         const j = p - SKULL;
         const slot = j ? j : 3;
@@ -1167,10 +1293,11 @@ export function swarm(shapes: Shape[], style: Style, sc: number, inset = 1 / sc,
         }
       }
     };
-    for (let tries = want * 60; tries > 0 && got < want; tries--) {
+    for (let tries = want * 60 * top; tries > 0 && got < want; tries--) {
       pick();
-      const w = density(Math.abs(b));
-      if (rnd() * style.edge > w) continue;
+      const g = swept ? binAt(gain, p, a, b) : 1;
+      const w = density(Math.abs(b)) * g;
+      if (rnd() * style.edge * top > w) continue;
       const near = (spacing * style.even * 0.72) / Math.sqrt(w / mean);
       const gx = Math.floor(x / cell);
       const gy = Math.floor(y / cell);
@@ -1196,7 +1323,8 @@ export function swarm(shapes: Shape[], style: Style, sc: number, inset = 1 / sc,
       const stray = Math.abs(b) > 1 - style.band && rnd() < style.stray / style.band;
       if (stray) b = Math.sign(b) * (1.06 + 0.3 * rnd());
       add(swept ? SWEPT : POLAR, p, a, b, Math.abs(b) > 0.8 ? 1 : 0, stray);
-      if (swept) Co[Co.length - 1] = coatOf(p, a, cl(b, -1, 1));
+      if (swept) De[De.length - 1] = binAt(laid, p, a, b);
+      if (swept) Co[Co.length - 1] = coatOf(p, cl((a * CUM[PE[p] - 1] - CAP0[p]) / MIDL[p]), cl(b, -1, 1));
       // Under a veil the outline is lit a step brighter, so the form holds through the haze.
       if (style.veil && !stray && Math.abs(b) > 0.86) Lv[Lv.length - 1] = Math.min(Lv[Lv.length - 1], 1);
     }
@@ -1228,6 +1356,7 @@ export function swarm(shapes: Shape[], style: Style, sc: number, inset = 1 / sc,
     Co.push(0);
     Sz.push((0.7 + 0.5 * rnd()) * grow);
     Lv.push(3);
+    De.push(0);
     Up.push(i);
   }
   const n = K.length;
@@ -1241,6 +1370,7 @@ export function swarm(shapes: Shape[], style: Style, sc: number, inset = 1 / sc,
     coat: Uint8Array.from(Co),
     size: Float32Array.from(Sz),
     level: Uint8Array.from(Lv),
+    den: Float32Array.from(De),
     d: Math.sqrt(sum / total),
     inset,
     core,
@@ -1275,7 +1405,9 @@ function toSegment(x: number, y: number, ax: number, ay: number, bx: number, by:
   const vx = bx - ax;
   const vy = by - ay;
   const u = cl(((x - ax) * vx + (y - ay) * vy) / (vx * vx + vy * vy || 1));
-  return Math.hypot(x - ax - vx * u, y - ay - vy * u);
+  const dx = x - ax - vx * u;
+  const dy = y - ay - vy * u;
+  return Math.sqrt(dx * dx + dy * dy);
 }
 
 /** Whether (x, y) is inside the ellipse at (cx, cy) with radii (rx, ry). */
@@ -1393,7 +1525,6 @@ const FOLD = 0.08;
  */
 export function place(w: Swarm, s: Shape, f: Field, ox: number, gy: number, sc: number, open = 1) {
   const { d, inset } = w;
-  const D = s.discs;
   chains(s);
   for (let j = 0; j < 3; j++) outline(s.polys[j], j);
   const eyes = cl(s.open * open);
@@ -1421,13 +1552,15 @@ export function place(w: Swarm, s: Shape, f: Field, ox: number, gy: number, sc: 
       const q = seek(CUM, from, end, a * CUM[end - 1]);
       const q1 = Math.min(q + 1, end - 1);
       const u = segU;
-      const r = lerp(D[q * 3 + 2], D[q1 * 3 + 2], u) - inset;
+      const r0 = lerp(VR[q], VR[q1], u);
+      const r = Math.max(0, r0 - inset);
       const off = b * r;
-      x = lerp(D[q * 3], D[q1 * 3], u) + lerp(NX[q], NX[q1], u) * off;
-      y = lerp(D[q * 3 + 1], D[q1 * 3 + 1], u) + lerp(NY[q], NY[q1], u) * off;
-      // On the inside of a bend the places bunch up (by `squeeze`): only that share of them is drawn, so the density holds.
-      const squeeze = 1 + lerp(KAP[q], KAP[q1], u) * off;
-      ok = squeeze > FOLD && (squeeze >= 1 || frac(i * 0.7548777) < squeeze);
+      x = lerp(VX[q], VX[q1], u) + lerp(NX[q], NX[q1], u) * off;
+      y = lerp(VY[q], VY[q1], u) + lerp(NY[q], NY[q1], u) * off;
+      // The particles are laid out for the most area this spot takes in any pose; it shows the share it needs now. On the
+      // inside of a bend the places bunch up (`squeeze` below one) and fewer show; where it folds over itself, none.
+      const squeeze = 1 + lerp(KAP[q], KAP[q1], u) * b * r0;
+      ok = squeeze > FOLD && frac(i * 0.7548777) * w.den[i] < CUM[end - 1] * r0 * squeeze;
       // How deep inside its own part it is meant to be (rig units, negative inside).
       const want = Math.abs(off) - r - inset;
       // What is in front: the body before the legs and the tail, the near legs before the far ones and the tail, the
@@ -1444,7 +1577,7 @@ export function place(w: Swarm, s: Shape, f: Field, ox: number, gy: number, sc: 
       // Where a part lies over itself (a folded leg: the thigh over the shank), one layer shows: the one the spot is deepest in.
       const own = p === BODY_I ? f.body : p < 2 ? f.far : p < 4 ? f.near : null;
       // (Not the neck near the skull: there the deeper layer runs under the face, which hides it.)
-      if (ok && own && sample(f, own, x, y) < want - 1.5 * d && !(p === BODY_I && inside(0, x, y, 1.3))) ok = false;
+      if (ok && own && sample(f, own, x, y) < want - 1.5 * d - (lerp(RM[q], RM[q1], u) - r0) && !(p === BODY_I && inside(0, x, y, 1.3))) ok = false;
       // A near leg's outline across the body: those dots brighten, the way the reference's inner contours do.
       if (ok && p === BODY_I && lit < 3 && Math.abs(sample(f, f.near, x, y)) < 0.45 * d) lit = 0;
       if (p < 2) tone = DIMMER[tone];

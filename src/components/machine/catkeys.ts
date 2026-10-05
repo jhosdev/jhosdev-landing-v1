@@ -47,7 +47,7 @@ function tail(p: Pose, k: readonly number[], swing = 0) {
 }
 
 // Tails: wrapped round the front along the floor (lying, and sitting), and held high (standing, stretching).
-const TAIL_WRAP = [-2.2, -1.6, -0.5, -0.05, 0, 0.08, 0.4];
+const TAIL_WRAP = [-1.8, -1.2, -0.42, -0.05, 0, 0.08, 0.4];
 const TAIL_CURL = [-0.8, -0.15, 0, 0.02, 0.15, 0.6, 1.3];
 const TAIL_HIGH = [2.45, 2.2, 2.05, 2.05, 2.25, 2.6, 3.0];
 

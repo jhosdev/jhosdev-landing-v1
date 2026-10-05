@@ -257,9 +257,9 @@ export function buildLuna(keys: Keys, loop: number, W: number, H: number, from =
   const rest = newShape();
   stand(pose, 0);
   skin(pose, rest);
-  const shapes = [rest, ...[0.25, 0.5, 0.75].map((k) => {
+  const shapes = [rest, ...Array.from({ length: 48 }, (_, k) => {
     const s = newShape();
-    keyed(pose, keys, lerp(from, to, k), loop);
+    keyed(pose, keys, lerp(from, to, (k + 0.5) / 48), loop);
     skin(pose, s);
     return s;
   })];

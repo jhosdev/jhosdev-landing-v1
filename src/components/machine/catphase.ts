@@ -209,7 +209,7 @@ function keyedPhase(box: CatBox, keys: Keys, form: number, morph: number, style:
   const sc = Math.min((box.h * 0.82) / top, (box.w - 24) / (hi - lo), ((box.h * 0.94) / 52) * 1.3);
   const ox = box.cx - ((lo + hi) / 2) * sc;
   const gy = box.cy + Math.min(box.h * 0.42, (top * sc) / 2 + box.h * 0.08);
-  const cat = dotCat(sc, ox, gy, at, times.slice(0, 7), style);
+  const cat = dotCat(sc, ox, gy, at, times, style);
   const a = rising(cat(CAT_AT + form), form, gy);
   return {
     frame: (t) => classified(materialise(cat(t), a, t), box, t),
