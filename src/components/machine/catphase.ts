@@ -414,10 +414,13 @@ function prowl(box: CatBox, style: Style): CatPhase {
   };
   const times = Array.from({ length: 25 }, (_, i) => lerp(CAT_AT, morph, i / 24));
   const { lo, hi, top } = reach(at, times);
-  const sc = Math.min((box.h * 0.8) / Math.max(top, 48), (box.w - 24) / (hi - lo));
+  // On a desktop the short path lets her fill the frame's height (the tail tip, carried up, nearly reaching its top).
+  const sc = Math.min((box.h * (wide ? 0.9 : 0.8)) / Math.max(top, 48), (box.w - 24) / (hi - lo));
   const ox = box.cx - ((lo + hi) / 2) * sc;
   const gy = box.cy + box.h * 0.42;
-  const cat = dotCat(sc, ox, gy, at, times, style);
+  // Drawn this large, the look's particles (fewer per px as a cat grows) thin out and the coat goes dim: a denser core, more of it bright.
+  const look = wide ? { ...style, count: style.count * 1.35, bright: Math.min(0.9, style.bright * 1.25) } : style;
+  const cat = dotCat(sc, ox, gy, at, times, look);
   const a = rising(cat(CAT_AT + form), form, gy);
   const land = PROWL.crouched + POUNCE.land - PROWL.from;
   return {

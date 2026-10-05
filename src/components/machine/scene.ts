@@ -7,7 +7,7 @@ import {
   buildStreets, cl, dash as drawDash, decode, drawStreets, entPos as streetPos, font, hash, lerp, mulberry32, pad, rgb, trunc,
   type Ent, type RGB, type Streets,
 } from './draw';
-import { CYAN_TONE, drawDots, drawFrame } from './cat';
+import { CYAN_TONE, DOT, drawFrame, drawSwarm } from './cat';
 import { HIDDEN, LIT } from './catrig';
 import { CUT_RATE, DEFAULT_INTRO, TEAR, VARIANT, catCut, catPhase, type CatPhase, type IntroName } from './catphase';
 import type { SceneCopy } from './copy';
@@ -134,12 +134,14 @@ export async function createMachine(cv: HTMLCanvasElement, data: MachineData, op
   let idleTracked: number[] = [];
   let pts: Pt[] = [];
   let phase: CatPhase | null = null;
-  /** The cat as it is when it starts resolving: where each of its particles is, its tone, and which ones show. */
-  let still = { x: new Float32Array(0), y: new Float32Array(0), tone: new Uint8Array(0), seen: new Int32Array(0) };
+  /** The cat as it is when it starts resolving: where each of its particles is, its tone, size and brightness, and which ones show. */
+  let still = { x: new Float32Array(0), y: new Float32Array(0), tone: new Uint8Array(0), size: new Float32Array(0), lit: new Uint8Array(0), seen: new Int32Array(0) };
   /** The handle's particles this frame. */
   let hx = new Float32Array(0);
   let hy = new Float32Array(0);
   let ht = new Uint8Array(0);
+  let hs = new Float32Array(0);
+  let hl = new Uint8Array(0);
   let box = { cx: 0, cy: 0, w: 0, h: 0 };
   let dotPattern: CanvasPattern | null = null;
   let scanPattern: CanvasPattern | null = null;
@@ -303,7 +305,7 @@ export async function createMachine(cv: HTMLCanvasElement, data: MachineData, op
     const cat = phase.frame(MORPH);
     const seen: number[] = [];
     for (let i = 0; i < cat.n; i++) if (cat.tone[i] !== HIDDEN) seen.push(i);
-    still = { x: cat.x.slice(), y: cat.y.slice(), tone: cat.tone.slice(), seen: Int32Array.from(seen) };
+    still = { x: cat.x.slice(), y: cat.y.slice(), tone: cat.tone.slice(), size: cat.size.slice(), lit: cat.lit.slice(), seen: Int32Array.from(seen) };
     const ow = Math.max(8, Math.round(box.w));
     const oh = Math.max(8, Math.round(box.h));
     const off = document.createElement('canvas');
@@ -339,6 +341,8 @@ export async function createMachine(cv: HTMLCanvasElement, data: MachineData, op
     hx = new Float32Array(n);
     hy = new Float32Array(n);
     ht = new Uint8Array(n);
+    hs = new Float32Array(n);
+    hl = new Uint8Array(n);
   }
 
   // =====================================================================
@@ -558,8 +562,11 @@ export async function createMachine(cv: HTMLCanvasElement, data: MachineData, op
           hx[i] = x;
           hy[i] = lerp(still.y[c], p.ty, k) - arc * (30 + p.r2 * 90) * (p.r2 < 0.5 ? 1 : -1);
           ht[i] = locked && x < sweepX ? CYAN_TONE : k > 0.5 ? LIT : still.tone[c];
+          // Each keeps the size and brightness it had on the cat, and takes the handle's on the way.
+          hs[i] = lerp(still.size[c], DOT, k);
+          hl[i] = k > 0.5 ? 0 : still.lit[c];
         }
-        drawDots(ctx, hx, hy, ht, pts.length);
+        drawSwarm(ctx, { n: pts.length, x: hx, y: hy, tone: ht, size: hs, lit: hl });
       }
       phase.over?.(ctx, t, leave);
     }

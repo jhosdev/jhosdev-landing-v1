@@ -19,7 +19,6 @@ const GRAIN = 4;
  * two stripe browns, the coat and its far step, ginger, cream and its far step, and her eyes in the system's green.
  */
 const RGBS = [BORDER, FAINT, MUTED, BODY, BODY_STRONG, TEXT, CYAN, ...COAT_RGB, GREEN];
-const TONES = RGBS.map((c) => rgb(c));
 /** Each tone at the brightness steps a particle can have: full, middle, dim, and a veil's faint speck. */
 const ALPHA = [1, 0.74, 0.46, 0.3];
 const STEPS = ALPHA.length;
@@ -56,29 +55,15 @@ export const catSwarm = (shapes: Shape[], sc: number, style: Style = STYLES[LOOK
 /** Puts the particles on this shape: rig (0, 0) lands on (ox, gy). `open` closes the eyes. */
 export const placeCat = (w: Swarm, s: Shape, ox: number, gy: number, sc: number, open = 1) => place(w, s, field(s, GRAIN / sc), ox, gy, sc, open);
 
-/** Draws n square particles centred on (x, y), each in its tone (HIDDEN is skipped), one fill colour per tone. `size` is per particle or for all. */
-export function drawDots(ctx: CanvasRenderingContext2D, x: Float32Array, y: Float32Array, tone: Uint8Array, n: number, size: number | Float32Array = DOT) {
-  const start = bucket(tone, null, n, 1);
-  for (let b = 0; b < TONE_COUNT; b++) {
-    if (start[b] === start[b + 1]) continue;
-    ctx.fillStyle = TONES[b];
-    for (let j = start[b]; j < start[b + 1]; j++) {
-      const i = order[j];
-      const s = typeof size === 'number' ? size : size[i];
-      ctx.fillRect(x[i] - s / 2, y[i] - s / 2, s, s);
-    }
-  }
-}
-
 let order = new Int32Array(0);
 /** Sorts the shown particles by tone (and brightness step, `steps` of them) once, a counting sort; returns where each batch starts in `order`. */
-function bucket(tone: Uint8Array, lit: Uint8Array | null, n: number, steps: number) {
+function bucket(tone: Uint8Array, lit: Uint8Array, n: number, steps: number) {
   const start = new Int32Array(TONE_COUNT * steps + 1);
   if (order.length < n) order = new Int32Array(n + 1024);
-  for (let i = 0; i < n; i++) if (tone[i] !== HIDDEN) start[tone[i] * steps + (lit ? lit[i] : 0) + 1]++;
+  for (let i = 0; i < n; i++) if (tone[i] !== HIDDEN) start[tone[i] * steps + lit[i] + 1]++;
   for (let b = 0; b < TONE_COUNT * steps; b++) start[b + 1] += start[b];
   const at = start.slice();
-  for (let i = 0; i < n; i++) if (tone[i] !== HIDDEN) order[at[tone[i] * steps + (lit ? lit[i] : 0)]++] = i;
+  for (let i = 0; i < n; i++) if (tone[i] !== HIDDEN) order[at[tone[i] * steps + lit[i]]++] = i;
   return start;
 }
 
@@ -86,7 +71,7 @@ function bucket(tone: Uint8Array, lit: Uint8Array | null, n: number, steps: numb
  * Draws a cat's particles: each its own size and brightness, small ones as squares and big ones round. With `prev`
  * (where they were a moment ago), each leaves a faint streak back to it.
  */
-export function drawSwarm(ctx: CanvasRenderingContext2D, w: Swarm, prev?: { x: Float32Array; y: Float32Array }) {
+export function drawSwarm(ctx: CanvasRenderingContext2D, w: Pick<Swarm, 'n' | 'x' | 'y' | 'tone' | 'size' | 'lit'>, prev?: { x: Float32Array; y: Float32Array }) {
   const { x, y, size } = w;
   const start = bucket(w.tone, w.lit, w.n, STEPS);
   for (let b = 0; b < TONE_COUNT * STEPS; b++) {

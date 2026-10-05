@@ -320,15 +320,22 @@ export const HERO_KEYS: Keys = [
  * the landing.
  */
 export const PROWL = { spot: 1.2, freeze: 1.45, low: [1.7, 2.1], creep: 1.85, still: 2.6, crouched: 2.9, from: 0.62 } as const;
-/** Where it plays (rig x): the crouch (the pounce's start), how far it walks before the freeze, how far it creeps. */
+/**
+ * Where it plays (rig x): the crouch (the pounce's start), how far it walks before the freeze, how far it creeps; and
+ * `off`, the second she sets off (0: she materialises already walking; later, she forms mid-stride and steps off).
+ */
 export interface ProwlGround {
   crouch: number;
   walk: number;
   creep: number;
+  off: number;
 }
-/** The frame of the desktop (the walk ends with the near forepaw raised) and of a phone (shorter: the far one). */
-export const PROWL_WIDE: ProwlGround = { crouch: -26, walk: STRIDE * 1.522, creep: 9 };
-export const PROWL_NARROW: ProwlGround = { crouch: -20, walk: STRIDE * 1.022, creep: 7 };
+/**
+ * The frame of the desktop (short, so she can be drawn large: half a stride, ending with the near forepaw raised; she
+ * sets off once she has formed, at a walking pace) and of a phone (the far forepaw).
+ */
+export const PROWL_WIDE: ProwlGround = { crouch: -20, walk: STRIDE * 0.522, creep: 6, off: 0.42 };
+export const PROWL_NARROW: ProwlGround = { crouch: -20, walk: STRIDE * 1.022, creep: 7, off: 0 };
 /** Seconds of the pounce the prowl ends on: it settles there, and resolves into the handle. */
 export const prowlEnd = () => PROWL.crouched + POUNCE.settled - PROWL.from;
 
@@ -341,9 +348,14 @@ const DECEL = 0.25;
 /** How far she has walked by s: a steady walk easing to a stop at the freeze, still, then a slow creep to a stop. */
 function prowlDistance(s: number, g: ProwlGround) {
   const { spot, freeze, creep, still } = PROWL;
-  const v = g.walk / (spot + (freeze - spot) / 2);
-  if (s < spot) return v * Math.max(0, s);
-  if (s < freeze) return v * (spot + (freeze - spot) * stopping((s - spot) / (freeze - spot)));
+  // Setting off from still, she eases in over ACCEL seconds.
+  const acc = g.off > 0 ? ACCEL : 0;
+  const v = g.walk / (spot - g.off - acc / 2 + (freeze - spot) / 2);
+  if (s < spot) {
+    const w = Math.max(0, s - g.off);
+    return acc && w < acc ? v * acc * starting(w / acc) : v * (w - acc / 2);
+  }
+  if (s < freeze) return v * (spot - g.off - acc / 2 + (freeze - spot) * stopping((s - spot) / (freeze - spot)));
   if (s < creep) return g.walk;
   const vs = g.creep / (still - creep - ACCEL / 2 - DECEL / 2);
   const t = Math.min(s, still) - creep;
