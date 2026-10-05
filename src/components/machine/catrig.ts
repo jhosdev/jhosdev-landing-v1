@@ -280,7 +280,7 @@ export function head(s: Shape, x: number, y: number, pitch: number, yaw: number,
     const ex = lat * 2.35 * depth * flip + 3.1 * side;
     const o: number[] = [];
     put(o, ex, lerp(0.35, 1.05, side));
-    s.eyes.push(o[0], o[1], k * seen * lerp(1.4, 1.0, side), lerp(1.0, 0.62, side) * k, pitch * yaw + roll + flip * lerp(lat * -0.05, 0.3, side), lat);
+    s.eyes.push(o[0], o[1], k * seen * lerp(1.4, 1.0, side), lerp(1.0, 0.62, side) * k, pitch * yaw + roll + flip * lerp(lat * 0.16, 0.3, side), lat);
   }
 }
 
@@ -806,7 +806,7 @@ export function field(s: Shape, g: number): Field {
 //     fraction of its half width there (a few strays sit just outside, dim, so the edge is never a drawn line);
 //   - the skull and the ears (closed outlines): an angle about the middle and a fraction of the way to the outline;
 //     the skull's are laid out on the face seen from the front, so the face keeps its weave as the head turns;
-//   - the eyes: lines of dots, a dark lid over a sliver of green, which close into a short pale curve.
+//   - the eyes: a pointed almond of green dots in a dark rim over a pale lower lid, which close into a short pale curve.
 // Each also has a size and a brightness, from skewed draws: mostly small and dim, a few large and bright. A part in
 // front hides the particles of the parts behind it (the body hides the legs and the tail, the near legs hide the far
 // ones and the tail, the skull hides the body, the near ear the far one); where a near leg crosses the body its
@@ -1158,9 +1158,8 @@ function area(q: number[]) {
   return Math.abs(a) / 2;
 }
 
-/** Dots per eye: along the lid, then the sliver of green under it. */
-const EYE_DOTS = 9;
-const IRIS_DOTS = 7;
+/** Dot slots per eye (eyeLayout fills them). */
+const EYE_SLOTS = 32;
 
 /**
  * The particles for a cat in the look `style`, drawn at `sc` px per rig unit, that will take the given shapes (the
@@ -1330,11 +1329,10 @@ export function swarm(shapes: Shape[], style: Style, sc: number, inset = 1 / sc,
     }
   }
   for (const lat of [-1, 1]) {
-    for (let j = 0; j < EYE_DOTS; j++) add(EYE_DOT, SKULL, (j / EYE_DOTS) * 2 * Math.PI, lat, 0, false);
-    for (let j = 0; j < IRIS_DOTS; j++) add(EYE_DOT, SKULL, 10 + j, lat, 0, false);
+    for (let j = 0; j < EYE_SLOTS; j++) add(EYE_DOT, SKULL, j, lat, 0, false);
   }
   const core = K.length;
-  for (let i = core - 2 * (EYE_DOTS + IRIS_DOTS); i < core; i++) Sz[i] = Math.max(Sz[i], 1.5 * grow);
+  for (let i = core - 2 * EYE_SLOTS; i < core; i++) Sz[i] = 1.35 * grow;
   // The veil: very faint specks, each riding on a particle of the coat a little way off it (rig units), so it costs next
   // to nothing to place. Round the outline half of them fall outside it: the edge frays. Not on the face (it stays clear).
   const Up: number[] = [];
@@ -1420,40 +1418,60 @@ const upperLid = (u: number, e: number) => lerp(shutLid(u), 0.62 * Math.pow(Math
 const ease = (x: number) => x * x * (3 - 2 * x);
 const EYE_OUT: [number, number, number, number] = [0, 0, 0, 0];
 
+/** This frame's eye: per slot, where its dot sits in the eye's frame (u across, v up, in eye radii), tone, brightness. */
+const EL = new Float32Array(EYE_SLOTS * 4);
+let ELN = 0;
+let EL_OPEN = NaN;
+const eyeAt = (u: number, v: number, tone: number, lit: number) => {
+  if (ELN < EYE_SLOTS) EL.set([u, v, tone, lit], ELN++ * 4);
+};
 /**
- * Her eyes are lines, the way she looks up from a blanket: open, a dark upper lid with a sliver of green under it; shut,
- * a short pale curve. Where eye dot `a` sits in the eye's own frame (u across, v up, in eye radii), its tone and
- * brightness, for eyes `open` (0..1); null when it is not drawn. `a` < 7 is a lid dot (an angle round the eye: its place
- * along the lid), `a` >= 10 an iris dot.
+ * Lays out the eye for eyes `open` (0..1), after her photo: half shut, green, set in a dark rim over a pale lower lid.
+ * Open, a pointed almond of green: two rows across the middle (the upper one in the lid's shade, a gap in it for the
+ * pupil), one toward the corners, brightest at the centre like an iris catching the light; the rim is the coat's gap
+ * round it, the pale lower lid a row of cream under that. Shut, a short pale curve. (At the size she is drawn an eye is
+ * about ten pixels wide: a line read as a visor, a slit or a catchlight split it in two, a lid line vanished in the fur.)
  */
-function eyeDot(a: number, open: number): [number, number, number, number] | null {
+function eyeLayout(open: number) {
+  if (open === EL_OPEN) return;
+  EL_OPEN = open;
+  ELN = 0;
   const e = ease(open);
-  const o = EYE_OUT;
-  if (a < 10) {
-    const k = Math.round((a / (2 * Math.PI)) * EYE_DOTS);
-    const u = (-0.95 + (1.9 * k) / (EYE_DOTS - 1)) * (e < 0.25 ? 0.85 : 1);
-    o[0] = u;
-    o[1] = upperLid(u, e);
-    o[2] = e < 0.25 ? CREAM_DIM : DEEP;
-    o[3] = 0;
-    return o;
+  if (e < 0.25) {
+    for (let k = 0; k < 9; k++) {
+      const u = (-0.95 + (1.9 * k) / 8) * 0.85;
+      eyeAt(u, shutLid(u), CREAM_DIM, 0);
+    }
+    return;
   }
-  if (e < 0.25) return null;
-  const k = a - 10;
-  const u = -0.62 + (1.24 * k) / (IRIS_DOTS - 1);
-  o[0] = u;
-  o[1] = lerp(shutLid(u), upperLid(u, e), 0.45);
-  o[2] = EYE;
-  o[3] = k === 3 ? 0 : 1;
-  return o;
+  for (let j = 0; j < 9; j++) {
+    const u = -0.84 + 0.21 * j;
+    const lo = shutLid(u);
+    const h = upperLid(u, e) - lo;
+    const mid = Math.abs(u) < 0.5;
+    if (h > 0.5 && mid) {
+      eyeAt(u, lo + h * 0.3, EYE, Math.abs(u) < 0.25 ? 0 : 1);
+      if (j !== 4) eyeAt(u, lo + h * 0.68, EYE, 1);
+    } else if (h > 0.1) eyeAt(u, lo + h * (mid ? 0.45 : 0.55), EYE, mid ? 0 : 1);
+  }
+  for (let k = 0; k < 7; k++) {
+    const u = -0.72 + 0.24 * k;
+    eyeAt(u, shutLid(u) - 0.42, CREAM, 2);
+  }
 }
 
-/** Whether a point of the face (eye radii from the eye's centre) is the eye's own gap, round the lid: there the coat is not drawn. */
+/** Eye slot `a` for eyes `open`: [u, v, tone, brightness], or null when the slot is not used. */
+function eyeDot(a: number, open: number): Float32Array | null {
+  eyeLayout(open);
+  return a < ELN ? EL.subarray(a * 4, a * 4 + 4) : null;
+}
+
+/** Whether a point of the face (eye radii from the eye's centre) is the eye's own gap, round the lid: there the coat is not drawn (the dark rim). */
 function eyeGap(eu: number, ev: number, open: number) {
-  if (Math.abs(eu) > 1.12) return false;
   const e = ease(open);
-  const m = e < 0.25 ? 0.4 : 0.2;
-  return ev > shutLid(eu) - m && ev < upperLid(eu, e) + m;
+  if (Math.abs(eu) > (e < 0.25 ? 1.12 : 1.2)) return false;
+  const shut = e < 0.25;
+  return ev > shutLid(eu) - (shut ? 0.4 : 0.3) && ev < upperLid(eu, e) + (shut ? 0.4 : 0.36);
 }
 
 /**
