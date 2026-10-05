@@ -35,3 +35,7 @@ jobs:
 
       - name: Build
         run: bun run build
+
+      # Pure file sizes of the built home against perf-budget.json (gzipped, no browser).
+      - name: Size budget
+        run: bun scripts/bench.ts --dist

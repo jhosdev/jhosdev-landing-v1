@@ -10,6 +10,7 @@ bun run dev        # dev server on :4321
 bun run build      # production build (must pass before commit)
 bun run test       # vitest
 bunx astro check   # type/content checks
+bun run bench      # performance against a running preview (bun run build && bunx astro preview --port 4511); see docs/performance.md
 ```
 
 ## Architecture
@@ -30,7 +31,7 @@ bunx astro check   # type/content checks
   - `runtime.ts`: intro, scroll triggers, focus mode (a hash opens just that section), and the docked command line.
   - `machine.css`: the system's styles (also used by `ArticlePage.astro`).
 - The command line reuses `src/components/shell/commands.ts` (pure parser, history, tab completion; tested in `tests/shell-commands.test.ts`). Commands return actions that point at markup by `ref`; they never carry content.
-- Motion: no library. Canvas 2D + a small cue engine, no new dependencies. Scripts are deferred modules and never block first paint; the intro's scene code is loaded only when the intro plays. Everything respects `prefers-reduced-motion` (no intro, no movements, content simply present). Debug parameters for freezing states: `?seek=6.5` (intro), `?move=0.6` (every section's movement), `?run=help;projects` (commands), `?intro` (force the intro; `?intro=pounce` picks the cat variant), `?cat=3` (the hero's cat, 3s after it was summoned), `?luna=14.8` (the about section's cat, 14.8s into her loop).
+- Motion: no library. Canvas 2D + a small cue engine, no new dependencies. Scripts are deferred modules and never block first paint; the intro's scene code is loaded only when the intro plays. Everything respects `prefers-reduced-motion` (no intro, no movements, content simply present). Debug parameters for freezing states: `?seek=6.5` (intro), `?move=0.6` (every section's movement), `?run=help;projects` (commands), `?intro` (force the intro; `?intro=pounce` picks the cat variant), `?cat=3` (the hero's cat, 3s after it was summoned), `?luna=14.8` (the about section's cat, 14.8s into her loop), `?bench` (counts each section's frames and their cost in `window.mcCost`; `scripts/bench.ts` reads it). The intro marks its first frame (`performance.mark('mc:intro')`).
 - Static output for now (no adapter); the resume fetch above runs at build time, not as runtime ISR.
 
 ## Design

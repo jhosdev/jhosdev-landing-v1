@@ -1,0 +1,17 @@
+{
+  "desktop.fcp": 300,
+  "desktop.lcp": 300,
+  "desktop.tbt": 200,
+  "desktop.introFirstFrame": 300,
+  "phone.fcp": 1600,
+  "phone.lcp": 1800,
+  "phone.tbt": 700,
+  "phone.introFirstFrame": 2200,
+  "home.jsKB": 60,
+  "home.totalKB": 420,
+  "about.frameMs": 3.8,
+  "hero.frameMs": 1,
+  "idle.aboutMsPerS": 200,
+  "dist.homeJsKB": 55,
+  "dist.homeTotalKB": 200
+}

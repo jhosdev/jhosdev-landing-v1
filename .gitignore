@@ -33,3 +33,8 @@ pnpm-debug.log*
 
 # About photo — fetched next to the resume JSON at build time; never committed
 public/luna.jpg
+
+# scripts/bench.ts output
+bench-results.json
+bench-dist.json
+bench-profile.cpuprofile
