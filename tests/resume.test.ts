@@ -28,8 +28,7 @@ describe('resume data', () => {
 });
 
 describe('es resume', () => {
-  // TODO: ES resume sync deferred deliberately (2026-09-12) — unskip when resume.es.json is re-synced
-  it.skip('parses and has the same number of work entries as en', () => {
+  it('parses and has the same number of work entries as en', () => {
     expect(resumeEs.work.length).toBe(resumeEn.work.length);
   });
 
@@ -52,8 +51,7 @@ describe('portfolio content', () => {
     expect(contentEn.experience).toHaveLength(resumeEn.work.length);
   });
 
-  // TODO: ES resume sync deferred deliberately (2026-09-12) — unskip when resume.es.json is re-synced
-  it.skip('es experience length matches en experience length', () => {
+  it('es experience length matches en experience length', () => {
     expect(contentEs.experience.length).toBe(contentEn.experience.length);
   });
 
