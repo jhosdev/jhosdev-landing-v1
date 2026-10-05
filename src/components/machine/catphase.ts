@@ -10,25 +10,14 @@
 import { E, FAINT, P, RED, TAU, cl, hash, lerp, rgb } from './draw';
 import { LOOK, STYLES, catSwarm, placeCat } from './cat';
 import { GREY, HIDDEN, POUNCE, newPose, newShape, pouncePose, skin, walkPose, type Pose, type Shape, type Style, type Swarm } from './catrig';
-import { bow, drowsy, keyed, loaf, sleep, slowBlink, stand, yawn, type Keys } from './catkeys';
+import { PROWL, PROWL_NARROW, PROWL_WIDE, bow, drowsy, keyed, loaf, prowlEnd, prowlPose, sleep, slowBlink, stand, yawn, type Keys } from './catkeys';
 
 /** What the particles are before they resolve into the handle. `?intro=<name>` picks one. */
-export const INTROS = ['nap', 'pounce', 'walk', 'stretch'] as const;
+export const INTROS = ['prowl', 'nap', 'pounce', 'walk', 'stretch'] as const;
 export type IntroName = (typeof INTROS)[number];
 /** The one that plays when nothing is asked for. */
-export const DEFAULT_INTRO: IntroName = 'nap';
+export const DEFAULT_INTRO: IntroName = 'prowl';
 export const introName = (s: string | null | undefined): IntroName => (INTROS as readonly string[]).includes(s ?? '') ? (s as IntroName) : DEFAULT_INTRO;
-/**
- * Per variant, in timeline seconds: `form`, how long the cat takes to materialise out of the panel of dots (the home
- * gives it FORM_HOME seconds); `morph`, when the cat starts resolving into the handle; `extra`, home seconds its motion
- * gets beyond the pace of the rest of the cut (a cat moves at a cat's pace).
- */
-export const VARIANT: Record<IntroName, { form: number; morph: number; extra: number }> = {
-  nap: { form: 0.6, morph: 9.0, extra: 0.48 },
-  pounce: { form: 0.35, morph: 8.63, extra: 0.72 },
-  walk: { form: 0.55, morph: 8.8, extra: 1.05 },
-  stretch: { form: 0.6, morph: 9.1, extra: 0.6 },
-};
 /** Home seconds the cat takes to materialise. */
 export const FORM_HOME = 1;
 /** Timeline second the cat phase starts (ACQUIRE). */
@@ -37,6 +26,19 @@ export const CAT_AT = 6.5;
 export const CUT_RATE = 4 / 3;
 /** Timeline seconds of signal tear after a hard cut (scene.ts); the cut into ACQUIRE plays it at the cut's pace, before the cat. */
 export const TEAR = 0.16;
+/**
+ * Per variant, in timeline seconds: `form`, how long the cat takes to materialise out of the panel of dots (the home
+ * gives it FORM_HOME seconds); `morph`, when the cat starts resolving into the handle; `extra`, home seconds its motion
+ * gets beyond the pace of the rest of the cut (a cat moves at a cat's pace).
+ */
+export const VARIANT: Record<IntroName, { form: number; morph: number; extra: number }> = {
+  // The prowl runs on its own clock (home seconds); `extra` makes the cut end as she settles from the landing.
+  prowl: { form: 0.55, morph: 9.1, extra: prowlEnd() + 0.03 - (TEAR / CUT_RATE + FORM_HOME) - (9.1 - CAT_AT - 0.55) / CUT_RATE },
+  nap: { form: 0.6, morph: 9.0, extra: 0.48 },
+  pounce: { form: 0.35, morph: 8.63, extra: 0.72 },
+  walk: { form: 0.55, morph: 8.8, extra: 1.05 },
+  stretch: { form: 0.6, morph: 9.1, extra: 0.6 },
+};
 /** The amber scan line's first pass down the frame (scene.ts draws it), in timeline seconds: it classifies her. */
 export const SCAN = [7, 8] as const;
 
@@ -375,9 +377,84 @@ function pounce(box: CatBox, style: Style): CatPhase {
   };
 }
 
+/**
+ * prowl: she materialises walking, spots the red marker and freezes, a forepaw raised; drops low and creeps toward
+ * it, her shoulder blades working; settles into the crouch, the rear wiggles, she leaps, and lands on it.
+ */
+function prowl(box: CatBox, style: Style): CatPhase {
+  const { wide } = box;
+  const { form, morph } = VARIANT.prowl;
+  const g = wide ? PROWL_WIDE : PROWL_NARROW;
+  // Her own clock: home seconds since the cat phase started, so the beats keep a cat's pace however the cut is timed.
+  const own = (t: number) => along(catCut('prowl').map(([h, tl]) => [tl, h]), t);
+  const L = POUNCE.to;
+  // The marker shows up ahead of her as she finishes forming; it jumps while she watches, and ends where she lands.
+  const stops = [
+    [1.0, L + 26, 4],
+    [1.62, L + 23, 10],
+    [2.2, L + 21, 3],
+    [2.7, L + 22, 7],
+    [3.25, L + 17, 1.6],
+  ];
+  const dot = (s: number) => {
+    let x = stops[0][1];
+    let y = stops[0][2];
+    for (let i = 1; i < stops.length; i++) {
+      const k = E.inOutCubic(P(s, stops[i][0] - 0.16, stops[i][0]));
+      x = lerp(x, stops[i][1], k);
+      y = lerp(y, stops[i][2], k);
+    }
+    return [x, y];
+  };
+  const at = (p: Pose, t: number) => {
+    const s = own(t);
+    const [x, y] = dot(s);
+    prowlPose(p, s, x, y, g);
+    return 1;
+  };
+  const times = Array.from({ length: 25 }, (_, i) => lerp(CAT_AT, morph, i / 24));
+  const { lo, hi, top } = reach(at, times);
+  const sc = Math.min((box.h * 0.8) / Math.max(top, 48), (box.w - 24) / (hi - lo));
+  const ox = box.cx - ((lo + hi) / 2) * sc;
+  const gy = box.cy + box.h * 0.42;
+  const cat = dotCat(sc, ox, gy, at, times, style);
+  const a = rising(cat(CAT_AT + form), form, gy);
+  const land = PROWL.crouched + POUNCE.land - PROWL.from;
+  return {
+    frame: (t) => classified(materialise(cat(t), a, t), box, t),
+    under: (o, t, k) => ground(o, box, k * P(t, 6.5, 6.75), ox, gy, sc),
+    over(o, t, k) {
+      const s = own(t);
+      const [x, y] = dot(s);
+      const px = ox + x * sc;
+      const py = gy - y * sc;
+      const on = k * P(s, stops[0][0] - 0.1, stops[0][0]) * (1 - P(s, land - 0.03, land));
+      if (on > 0) {
+        const pulse = 0.5 + 0.5 * Math.sin(s * 22);
+        o.fillStyle = rgb(RED, 0.18 * on);
+        o.beginPath();
+        o.arc(px, py, 9 + 3 * pulse, 0, TAU);
+        o.fill();
+        o.fillStyle = rgb(RED, on);
+        o.fillRect(px - 2.5, py - 2.5, 5, 5);
+      }
+      const hit = P(s, land - 0.03, land + 0.4);
+      if (hit > 0 && hit < 1) {
+        o.strokeStyle = rgb(RED, 0.7 * (1 - hit));
+        o.lineWidth = 1.5;
+        o.beginPath();
+        o.arc(px, py, 6 + E.outExpo(hit) * 90, 0, TAU);
+        o.stroke();
+      }
+    },
+  };
+}
+
 /** The cat phase of a variant, laid out in `box`, in a look (the site's, unless the gallery asks for another). */
 export function catPhase(name: IntroName, box: CatBox, style: Style = STYLES[LOOK]): CatPhase {
   switch (name) {
+    case 'prowl':
+      return prowl(box, style);
     case 'nap':
       return nap(box, style);
     case 'pounce':

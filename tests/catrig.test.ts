@@ -3,7 +3,7 @@ import { BODY_PART, DUTY, HIDDEN, POUNCE, STRIDE, field, newPose, newShape, plac
 import { DEFAULT_INTRO, INTROS, homeCut } from '../src/components/machine/scene';
 import { addedTime } from '../src/components/machine/catphase';
 import { STYLES } from '../src/components/machine/cat';
-import { ABOUT, ABOUT_KEYS, HERO, HERO_KEYS, keyed } from '../src/components/machine/catkeys';
+import { ABOUT, ABOUT_KEYS, HERO, HERO_KEYS, PROWL_NARROW, keyed, prowlEnd, prowlPose } from '../src/components/machine/catkeys';
 
 describe('the cat walks, it does not slide', () => {
   const feet = new Float32Array(16);
@@ -91,6 +91,8 @@ describe('the particles', () => {
   const moves = [
     [(t: number) => walkPose(p, t), 0.2, 2.3],
     [(t: number) => sitPose(p, 0.5 * Math.sin(t * 3), Math.cos(t)), 0, 3],
+    // The prowl: walk, freeze, stalk, crouch (up to the leap).
+    [(t: number) => prowlPose(p, t, 20, 3), 0.2, 3.7],
   ] as const;
   const cat = (pose: (t: number) => void, from: number, to: number) => {
     const shapes = [from, (from + to) / 2, to].map((t) => {
@@ -142,15 +144,38 @@ describe('the particles', () => {
 });
 
 describe('the home cut', () => {
-  it('adds at most 1.2s for the default cat, at most 2.1s for any other, and runs forward', () => {
-    expect(homeCut(DEFAULT_INTRO).at(-1)![0] - 11.2).toBeLessThan(1.2);
+  it('adds at most 2.6s for the default cat (the prowl), at most 2.1s for any other, and runs forward', () => {
+    expect(DEFAULT_INTRO).toBe('prowl');
     for (const name of INTROS) {
       const cut = homeCut(name);
       expect(cut.at(-1)![0] - 11.2).toBeCloseTo(addedTime(name), 6);
-      expect(addedTime(name)).toBeLessThan(2.1);
+      expect(addedTime(name)).toBeLessThan(name === 'prowl' ? 2.6 : 2.1);
       for (let i = 1; i < cut.length; i++) expect(cut[i][0]).toBeGreaterThan(cut[i - 1][0]);
     }
   });
+});
+
+describe('the prowl', () => {
+  const p = newPose();
+  const s = newShape();
+  const vec = () => [p.hx, p.hy, p.sx, p.sy, p.headX, p.headY, ...p.feet, ...p.tail];
+  it('is one move from the walk to the leap: no pose jumps between frames, and nothing goes through the floor', () => {
+    for (const g of [undefined, PROWL_NARROW]) {
+      let was = (prowlPose(p, 0, 20, 3, g), vec());
+      for (let t = 0.004; t < 3.7; t += 0.004) {
+        prowlPose(p, t, 20, 3, g);
+        const now = vec();
+        // A walk at its fastest covers about 0.15 rig units in 4ms; a pop between moves would be several.
+        expect(Math.max(...now.map((v, i) => Math.abs(v - was[i])))).toBeLessThan(0.6);
+        was = now;
+        skin(p, s);
+        let low = Infinity;
+        for (let i = 0; i < s.discs.length; i += 3) low = Math.min(low, s.discs[i + 1] - s.discs[i + 2]);
+        expect(low).toBeGreaterThan(-1e-6);
+      }
+    }
+    expect(prowlEnd()).toBeGreaterThan(4);
+  }, 30000);
 });
 
 describe('her day (keyed timelines)', () => {

@@ -4,8 +4,8 @@
 // The head leads a move and the tail follows it; a foot that has somewhere else
 // to be lifts and takes a step, it never slides. Pure maths, no DOM.
 
-import { E, P, lerp } from './draw';
-import { HIND, SIT, TAIL, TAIL_SAT, TAIL_UP, newPose, sitPose, type Pose } from './catrig';
+import { E, P, cl, lerp } from './draw';
+import { HIND, POUNCE, SIT, STRIDE, TAIL, TAIL_LOW, TAIL_SAT, TAIL_UP, newPose, pouncePose, sitPose, walkFoot, type Pose } from './catrig';
 
 /** A pose at time t (seconds): writes every field of the pose. */
 export type PoseFn = (p: Pose, t: number) => void;
@@ -31,6 +31,7 @@ function base(p: Pose) {
   p.roll = 0;
   p.mouth = 0;
   p.tailFront = 0;
+  p.blades = 0;
 }
 /** Feet in order far hind, far fore, near hind, near fore; all on the ground, hocks and pasterns at these angles. */
 function feet(p: Pose, xs: readonly number[], hock: number, pastern = 0.87) {
@@ -216,6 +217,7 @@ export function mix(p: Pose, a: Pose, b: Pose, u: number) {
   p.earB = lerp(a.earB, b.earB, e);
   p.open = lerp(a.open, b.open, e);
   p.mouth = lerp(a.mouth, b.mouth, e);
+  p.blades = lerp(a.blades, b.blades, e);
   p.tailFront = e < 0.5 ? a.tailFront : b.tailFront;
   mixArr(p.tail, a.tail, b.tail, e);
   for (let leg = 0; leg < 4; leg++) {
@@ -308,3 +310,99 @@ export const HERO_KEYS: Keys = [
     p.open = Math.min(p.open, slowBlink(t, 3.8));
   }],
 ];
+
+/* ------------------------------------------------------------------ prowl */
+
+/**
+ * The prowl, in seconds since the cat phase starts (the home's own time, so it keeps a cat's pace): she walks on,
+ * spots the marker and freezes with a forepaw raised, drops low and creeps, her shoulder blades working, settles
+ * into the crouch, and from there it is the pounce (pouncePose, from `from` seconds into it): the wiggle, the leap,
+ * the landing.
+ */
+export const PROWL = { spot: 1.2, freeze: 1.45, low: [1.7, 2.1], creep: 1.85, still: 2.6, crouched: 2.9, from: 0.62 } as const;
+/** Where it plays (rig x): the crouch (the pounce's start), how far it walks before the freeze, how far it creeps. */
+export interface ProwlGround {
+  crouch: number;
+  walk: number;
+  creep: number;
+}
+/** The frame of the desktop (the walk ends with the near forepaw raised) and of a phone (shorter: the far one). */
+export const PROWL_WIDE: ProwlGround = { crouch: -26, walk: STRIDE * 1.522, creep: 9 };
+export const PROWL_NARROW: ProwlGround = { crouch: -20, walk: STRIDE * 1.022, creep: 7 };
+/** Seconds of the pounce the prowl ends on: it settles there, and resolves into the handle. */
+export const prowlEnd = () => PROWL.crouched + POUNCE.settled - PROWL.from;
+
+/** Distance (fraction of a move) covered x of the way through an ease to a stop, and through an ease from still. */
+const stopping = (x: number) => x - x ** 3 + x ** 4 / 2;
+const starting = (x: number) => x ** 3 - x ** 4 / 2;
+const ACCEL = 0.2;
+const DECEL = 0.25;
+
+/** How far she has walked by s: a steady walk easing to a stop at the freeze, still, then a slow creep to a stop. */
+function prowlDistance(s: number, g: ProwlGround) {
+  const { spot, freeze, creep, still } = PROWL;
+  const v = g.walk / (spot + (freeze - spot) / 2);
+  if (s < spot) return v * Math.max(0, s);
+  if (s < freeze) return v * (spot + (freeze - spot) * stopping((s - spot) / (freeze - spot)));
+  if (s < creep) return g.walk;
+  const vs = g.creep / (still - creep - ACCEL / 2 - DECEL / 2);
+  const t = Math.min(s, still) - creep;
+  let d = vs * ACCEL * starting(Math.min(t, ACCEL) / ACCEL);
+  if (t > ACCEL) d += vs * (Math.min(t, still - creep - DECEL) - ACCEL);
+  if (t > still - creep - DECEL) d += vs * DECEL * stopping((t - (still - creep - DECEL)) / DECEL);
+  return g.walk + d;
+}
+
+const PA = newPose();
+const PB = newPose();
+
+/** The walk and the stalk, before the crouch. */
+function stalkPose(p: Pose, s: number, dotX: number, dotY: number, g: ProwlGround) {
+  base(p);
+  const { spot, freeze, low: lw } = PROWL;
+  const d = prowlDistance(s, g);
+  const x0 = g.crouch - g.walk - g.creep;
+  const ph = d / STRIDE;
+  const low = smooth(P(s, lw[0], lw[1]));
+  // A paw in the air when she freezes stays there; creeping, she lifts each one a little less.
+  for (let leg = 0; leg < 4; leg++) {
+    walkFoot(d, leg, 1 - 0.25 * low, p.feet);
+    p.feet[leg * 4] += x0;
+  }
+  // Each girdle rises over its planted leg and dips between steps; low, the shoulders work harder than the hips.
+  const hipBob = 0.9 * Math.cos(4 * Math.PI * (ph - 0.31));
+  const shBob = 0.9 * Math.cos(4 * Math.PI * (ph + 0.25 - 0.31));
+  const c = d + x0;
+  p.hy = lerp(26, 20.5, low) + hipBob * (1 - 0.5 * low);
+  p.sy = lerp(26, 16, low) + shBob * (1 + 0.7 * low);
+  const reach = Math.sqrt(12.5 * 12.5 - ((p.sy - p.hy) / 2) ** 2);
+  p.hx = c - reach;
+  p.sx = c + reach;
+  p.bend = 0.6 * low;
+  p.blades = low;
+  // She spots it: the head comes up a touch and turns to it, the near ear flicks; low, the head is level with the back.
+  const alert = smooth(P(s, freeze - 0.12, freeze + 0.12)) * (1 - low);
+  p.headX = p.sx + lerp(11, 12, low) + 0.8 * alert;
+  p.headY = lerp(32 + shBob * 0.35, p.sy + 3.5, low) + 1.4 * alert;
+  const look = cl(Math.atan2(dotY - p.headY, dotX - p.headX), -0.45, 0.4) * 0.8;
+  p.headA = lerp(-0.14 + 0.05 * Math.sin(4 * Math.PI * ph - 0.9), look, smooth(P(s, spot, freeze)));
+  p.earB = 0.4 * bump(s, freeze - 0.02, 0.045);
+  // The tail is carried up with a wave along it while she walks; stalking, it is held low and straight, the tip twitching.
+  for (let i = 0; i < TAIL; i++) {
+    const wave = (0.05 + 0.035 * i) * Math.sin(2 * Math.PI * ph - i * 0.75);
+    const twitch = 0.07 * i * Math.sin(s * 9 - i * 0.6);
+    p.tail[i] = lerp(TAIL_UP[i] + wave, TAIL_LOW[i] + twitch, low);
+  }
+}
+
+/** The prowl at s; the marker is at (dotX, dotY). */
+export function prowlPose(p: Pose, s: number, dotX: number, dotY: number, g: ProwlGround = PROWL_WIDE) {
+  const { still, crouched, from } = PROWL;
+  const tp = s - crouched + from;
+  if (s >= crouched) return pouncePose(p, tp, dotX, dotY, g.crouch);
+  if (s <= still - 0.05) return stalkPose(p, s, dotX, dotY, g);
+  // Settling into the crouch: the feet step to their places, the rear comes up, the pounce takes over.
+  stalkPose(PA, s, dotX, dotY, g);
+  pouncePose(PB, Math.max(tp, POUNCE.crouch), dotX, dotY, g.crouch);
+  mix(p, PA, PB, P(s, still - 0.05, crouched));
+}

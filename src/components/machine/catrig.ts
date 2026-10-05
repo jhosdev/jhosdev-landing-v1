@@ -46,7 +46,7 @@ const PHASE = [0.5, 0.75, 0, 0.25];
 const NEUTRAL = [-12.5, 11.5, -12.5, 11.5];
 export const TAIL_UP = [2.75, 2.5, 2.25, 2.05, 1.95, 2.0, 2.2];
 export const TAIL_SAT = [2.55, 2.2, 1.95, 1.8, 1.55, 1.05, 0.35];
-const TAIL_LOW = [3.3, 3.2, 3.0, 2.7, 2.35, 2.0, 1.7];
+export const TAIL_LOW = [3.3, 3.2, 3.0, 2.7, 2.35, 2.0, 1.7];
 
 export interface Pose {
   /** The spine runs from the hips (hx, hy) to the shoulders (sx, sy); `bend` arches the back. */
@@ -74,9 +74,11 @@ export interface Pose {
   mouth: number;
   /** 1: the tail is wrapped toward the camera, so it lies over the body and the legs instead of behind them. */
   tailFront: number;
+  /** 0..1: how much the shoulder blades work above the back (a stalk: each one rises over its planted leg). */
+  blades: number;
 }
 
-export const newPose = (): Pose => ({ hx: 0, hy: 0, sx: 0, sy: 0, bend: 0, feet: new Float32Array(16), headX: 0, headY: 0, headA: 0, yaw: 1, tail: new Float32Array(TAIL), earA: 0, earB: 0, open: 1, roll: 0, mouth: 0, tailFront: 0 });
+export const newPose = (): Pose => ({ hx: 0, hy: 0, sx: 0, sy: 0, bend: 0, feet: new Float32Array(16), headX: 0, headY: 0, headA: 0, yaw: 1, tail: new Float32Array(TAIL), earA: 0, earB: 0, open: 1, roll: 0, mouth: 0, tailFront: 0, blades: 0 });
 /** Back to a plain face: eyes open, head upright, mouth shut, tail behind. Every pose starts here. */
 const rest = (p: Pose) => {
   p.open = 1;
@@ -85,6 +87,7 @@ const rest = (p: Pose) => {
   p.tailFront = 0;
   p.earA = 0;
   p.earB = 0;
+  p.blades = 0;
 };
 
 /** What a part of the silhouette is: how it joins the rest. */
@@ -314,7 +317,9 @@ export function skin(p: Pose, s: Shape) {
     // The joint a leg hangs from gives a little toward its foot, the way a shoulder blade slides.
     const hip = at(p.hx, p.hy, -0.5 + far, -1.5);
     hip[0] += 0.15 * cl(fx - hip[0], -12, 12);
-    const shoulder = at(p.sx, p.sy, -0.5 + 1.6 * far, -4.5);
+    // Stalking, a shoulder blade rises above the back over its planted leg, the more as the leg pushes back under it.
+    const blade = HIND[leg] ? 0 : p.blades * 4.2 * cl(0.45 + (p.sx - fx) / 12) * (1 - cl(p.feet[leg * 4 + 1] / 3));
+    const shoulder = at(p.sx, p.sy, -0.5 + 1.6 * far, -4.5 + blade);
     shoulder[0] += 0.3 * cl(fx - shoulder[0], -12, 12);
     const fy = p.feet[leg * 4 + 1];
     const a = p.feet[leg * 4 + 2];
