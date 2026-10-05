@@ -297,6 +297,14 @@ export async function createMachine(cv: HTMLCanvasElement, data: MachineData, op
   const drawMap = (t: number, a: number) => drawStreets(ctx, map, t, a, W, H);
 
   // ---- particles: a cat (catphase.ts) that resolves into the handle ----
+  /** Whether the particles are laid out for this size. They are only needed from ACQUIRE on: laid out when the page is
+   *  idle after a fit, so the intro's first frame does not wait for them, or at once if ACQUIRE comes first. */
+  let laid = false;
+  function particles() {
+    if (laid) return;
+    laid = true;
+    buildParticles();
+  }
   function buildParticles() {
     box = wide
       ? { cx: W * 0.355, cy: (top + bot) / 2 - 6, w: W * 0.47, h: Math.min((bot - top) * 0.56, W * 0.26) }
@@ -536,6 +544,7 @@ export async function createMachine(cv: HTMLCanvasElement, data: MachineData, op
   function acquire(t: number) {
     fill(BG);
     dots(0.8);
+    particles();
     const { cx, cy, w, h } = box;
     const locked = t >= 10;
     const state: RGB = locked ? CYAN : t >= 7 ? AMBER : RED;
@@ -1198,7 +1207,9 @@ export async function createMachine(cv: HTMLCanvasElement, data: MachineData, op
     bot = H - m - fs * 3.6;
     wrapCache.clear();
     buildMap();
-    buildParticles();
+    laid = false;
+    if ('requestIdleCallback' in window) requestIdleCallback(particles, { timeout: 1500 });
+    else setTimeout(particles, 300);
     dotPattern = tile(28, 28, (o) => {
       o.fillStyle = rgb(BORDER);
       o.fillRect(13, 13, 2, 2);
@@ -1221,7 +1232,10 @@ export async function createMachine(cv: HTMLCanvasElement, data: MachineData, op
     vignette.addColorStop(1, 'rgba(0,0,0,0.45)');
     render(current);
   }
-  new ResizeObserver(fit).observe(cv);
+  // An observer reports the size it starts with too: refit only when it has changed (a fit lays the cat out again).
+  new ResizeObserver(() => {
+    if (cv.clientWidth !== W || cv.clientHeight !== H || Math.min(window.devicePixelRatio || 1, 2) !== dpr) fit();
+  }).observe(cv);
   fit();
   return { render: (s) => render((current = s)), fit };
 }

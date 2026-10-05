@@ -10,6 +10,7 @@
 //   ?intro=walk       ...with that cat (nap, pounce, walk, stretch); combines with ?seek=
 //   ?cat=2.5          the hero's cat, frozen 2.5s after it was summoned (implies ?move=1)
 //   ?luna=14.8        the about section's cat, frozen 14.8s into her loop (implies ?move=1)
+//   ?bench            count each section's frames and their cost (window.mcCost: id -> [frames, ms]; scripts/bench.ts)
 
 import { complete, execute, suggest, type Action, type ShellContext } from '../shell/commands';
 import { P, cl } from './draw';
@@ -39,9 +40,13 @@ interface Section {
   visible: boolean;
   /** Cues are still resolving, so every frame counts. */
   hot: boolean;
+  /** When its canvas was last painted (ms, the frame clock). */
+  painted: number;
 }
 
 const SEEN_KEY = 'mc:seen';
+/** The shortest gap between two paints of an idle loop (ms): 30 a second, with room for a 60 Hz frame clock's jitter. */
+const IDLE_MS = 1000 / 30 - 4;
 /** Where the asset's movement picks up after the intro: the name is known, the lock is about to confirm. */
 const HANDOFF = 1.3;
 
@@ -58,6 +63,7 @@ function start(root: HTMLElement, data: RuntimeData) {
   const frozen = params.has('move') ? cl(Number(params.get('move')) || 0) : params.has('cat') || params.has('luna') ? 1 : null;
   const scripted = params.has('run');
   const still = reduced || frozen !== null;
+  const costs: Record<string, number[]> | null = params.has('bench') ? ((window as unknown as { mcCost: object }).mcCost = {}) : null;
 
   /* ---------------- sections and their movements ---------------- */
 
@@ -72,6 +78,7 @@ function start(root: HTMLElement, data: RuntimeData) {
       idles: el.hasAttribute('data-idle'),
       visible: false,
       hot: false,
+      painted: 0,
     };
     return sec;
   });
@@ -227,27 +234,55 @@ function start(root: HTMLElement, data: RuntimeData) {
 
   // One clock for every section; it sleeps when nothing on screen is moving.
   let raf = 0;
+  let nap = 0;
   let prev = 0;
-  let beat = 0;
   function tick(now: number) {
     raf = 0;
     const dt = Math.min(0.1, (now - prev) / 1000);
     prev = now;
-    beat++;
     let busy = false;
+    /** When the next idle loop is due a paint; -1 while something needs every frame. */
+    let due = Infinity;
     for (const sec of secs) {
       if ((sec.phase !== 'playing' && sec.phase !== 'idle') || !sec.visible) continue;
       sec.t += dt;
       busy = true;
-      // Idle loops are ambient: half the frame rate is plenty.
-      if (sec.phase === 'idle' && beat % 2 && !sec.hot) continue;
+      // Idle loops are ambient: about 30 frames a second is plenty, whatever the screen's refresh rate (on a 60 Hz
+      // screen, every other frame).
+      if (sec.phase === 'idle' && !sec.hot && now - sec.painted < IDLE_MS) {
+        if (due >= 0) due = Math.min(due, sec.painted + IDLE_MS);
+        continue;
+      }
+      sec.painted = now;
+      const t0 = costs ? performance.now() : 0;
       const pending = frame(sec);
+      if (costs) {
+        const c = (costs[sec.id] ??= [0, 0]);
+        c[0]++;
+        c[1] += performance.now() - t0;
+      }
       sec.hot = pending;
       if (!pending && sec.phase === 'playing') sec.phase = sec.idles ? 'idle' : 'done';
+      if (sec.phase === 'playing' || sec.hot) due = -1;
+      else if (sec.phase === 'idle' && due >= 0) due = Math.min(due, now + IDLE_MS);
     }
-    if (busy) raf = requestAnimationFrame(tick);
+    if (!busy) return;
+    // Only idle loops left: sleep until the next one is due, instead of asking the browser for every frame in between.
+    if (due > now + 20 && due !== Infinity) {
+      nap = window.setTimeout(() => {
+        nap = 0;
+        raf = requestAnimationFrame(tick);
+      }, due - now - 10);
+    } else raf = requestAnimationFrame(tick);
   }
   function wake() {
+    if (nap) {
+      // Asleep between idle frames: something wants the clock now.
+      clearTimeout(nap);
+      nap = 0;
+      raf = requestAnimationFrame(tick);
+      return;
+    }
     if (raf || still) return;
     prev = performance.now();
     raf = requestAnimationFrame(tick);
@@ -424,6 +459,8 @@ function start(root: HTMLElement, data: RuntimeData) {
       last = time;
       if (at >= INTRO_END) return endIntro(false);
       render(at);
+      // For scripts/bench.ts: when the intro's first frame was drawn.
+      if (!performance.getEntriesByName('mc:intro').length) performance.mark('mc:intro');
       requestAnimationFrame(step);
     };
     requestAnimationFrame(step);
@@ -701,6 +738,18 @@ function start(root: HTMLElement, data: RuntimeData) {
   /* ---------------- go ---------------- */
 
   host.__mc = true;
+
+  // Infinite CSS loops are painted on the main thread every frame, even off screen: off screen they hold still. The
+  // invitation's board, and the monitor's live light.
+  for (const el of document.querySelectorAll<HTMLElement | SVGElement>('.mc-ttt, .mc-live i')) {
+    if (reduced) break;
+    new IntersectionObserver(([e]) => {
+      for (const a of el.getAnimations({ subtree: true })) {
+        if (e.isIntersecting) a.play();
+        else a.pause();
+      }
+    }).observe(el);
+  }
   const ref = hashRef();
   const landed = ref ? document.getElementById(ref) : null;
   wanted = Math.max(0, landed ? records.indexOf(landed) : 0);

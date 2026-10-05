@@ -245,14 +245,8 @@ export function createFx(host: HTMLElement, calm: boolean): Fx | null {
 const memo = <T,>(fx: Fx, key: string, make: () => T): T => (fx.memo[key] ??= make()) as T;
 const all = (fx: Fx, selector: string) => [...fx.host.querySelectorAll<HTMLElement>(selector)];
 
-/** A font as the canvas reports it back once set: setting the same font again every frame costs a parse each time. */
-const fonts = new Map<string, string>();
 function text(ctx: CanvasRenderingContext2D, s: string, x: number, y: number, size: number, col: string, align: CanvasTextAlign = 'left', weight = 400) {
-  const f = font(size, weight);
-  if (ctx.font !== fonts.get(f)) {
-    ctx.font = f;
-    fonts.set(f, ctx.font);
-  }
+  ctx.font = font(size, weight);
   ctx.fillStyle = col;
   ctx.textAlign = align;
   ctx.textBaseline = 'alphabetic';
